@@ -1,0 +1,20 @@
+{
+    "company_name": "FinTech Analytics Corp",
+    "total_tableau_users": 5200,
+    "departments": {
+      "Trading": {"users": 850, "priority": "critical"},
+      "Risk Management": {"users": 420, "priority": "high"},
+      "Compliance": {"users": 380, "priority": "high"},
+      "Marketing": {"users": 290, "priority": "medium"},
+      "Operations": {"users": 1200, "priority": "medium"},
+      "IT": {"users": 180, "priority": "high"},
+      "Finance": {"users": 650, "priority": "high"},
+      "Executive": {"users": 80, "priority": "critical"}
+    },
+    "common_systems": {
+      "databases": ["Oracle Risk DB", "SQL Server Trading", "PostgreSQL Analytics"],
+      "tableau_servers": ["Prod-Tableau-01", "Prod-Tableau-02", "Dev-Tableau"],
+      "sso_provider": "Active Directory"
+    }
+  }
+  

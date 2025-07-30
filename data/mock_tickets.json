@@ -1,0 +1,27 @@
+[
+    {
+      "user_email": "john.trader@fintechanalytics.com",
+      "department": "Trading",
+      "subject": "Trading dashboard showing incorrect P&L",
+      "description": "The real-time P&L dashboard is showing numbers that don't match our trading system. This is affecting our risk calculations.",
+      "expected_category": "technical",
+      "expected_priority": "critical"
+    },
+    {
+      "user_email": "sarah.analyst@fintechanalytics.com", 
+      "department": "Risk Management",
+      "subject": "Can't connect to Oracle Risk database",
+      "description": "Getting connection timeout errors when trying to refresh my risk assessment workbook. Need this for tomorrow's board meeting.",
+      "expected_category": "technical",
+      "expected_priority": "high"
+    },
+    {
+      "user_email": "mike.compliance@fintechanalytics.com",
+      "department": "Compliance", 
+      "subject": "Need access to new regulatory reporting templates",
+      "description": "My manager said there are new Tableau templates for CCAR reporting. I need access to create next quarter's submissions.",
+      "expected_category": "account",
+      "expected_priority": "medium"
+    }
+  ]
+  

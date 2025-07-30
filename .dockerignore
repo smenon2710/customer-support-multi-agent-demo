@@ -1,0 +1,32 @@
+# Ignore Python virtual environments
+venv/
+.venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore git and other version control metadata
+.git
+.gitignore
+
+# Ignore environment variable files
+.env
+
+# Ignore IDE/editor config files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Ignore Docker files not needed in the build context (optional)
+docker-compose.override.yml
+
+# Ignore local data output or logs that should not be in the container
+logs/
+*.log
+
+# Ignore system files
+.DS_Store
+Thumbs.db
