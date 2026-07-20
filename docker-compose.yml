@@ -12,13 +12,14 @@ services:
       retries: 3
 
   router-agent:
-    build: 
+    build:
       context: .
       dockerfile: agents/router_agent/Dockerfile
     ports:
       - "8001:8001"
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     environment:
       - REDIS_URL=redis://redis:6379
 
@@ -29,7 +30,8 @@ services:
     ports:
       - "8002:8002"
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     environment:
       - REDIS_URL=redis://redis:6379
 
@@ -40,7 +42,8 @@ services:
     ports:
       - "8003:8003"
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     environment:
       - REDIS_URL=redis://redis:6379
 
@@ -54,3 +57,7 @@ services:
       - router-agent
       - technical-agent
       - account-agent
+    environment:
+      - ROUTER_URL=http://router-agent:8001
+      - TECHNICAL_URL=http://technical-agent:8002
+      - ACCOUNT_URL=http://account-agent:8003

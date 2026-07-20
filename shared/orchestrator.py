@@ -1,22 +1,18 @@
-import requests
-from shared.models import SupportTicket
-from shared.message_queue import MessageQueue
-import json
-import time
 from datetime import datetime
+
+import requests
+
+from shared.config import AGENT_ENDPOINTS
+from shared.models import SupportTicket
+
 
 class AgentOrchestrator:
     def __init__(self):
-        self.mq = MessageQueue()
-        self.agent_endpoints = {
-                "router": "http://router-agent:8001",
-    "technical": "http://technical-agent:8002",
-    "account": "http://account-agent:8003"
-        }
-    
+        self.agent_endpoints = AGENT_ENDPOINTS
+
     def process_support_ticket(self, ticket: SupportTicket) -> dict:
         conversation_log = []
-        
+
         try:
             # Convert ticket to dictionary with ISO datetime format
             ticket_dict = {
@@ -28,12 +24,13 @@ class AgentOrchestrator:
                 "created_at": ticket.created_at.isoformat(),
                 "messages": ticket.messages
             }
-            
+
             # Step 1: Route the ticket
             routing_response = requests.post(
                 f"{self.agent_endpoints['router']}/route_ticket",
                 json=ticket_dict
             )
+            routing_response.raise_for_status()
             routing_result = routing_response.json()
             conversation_log.append({
                 "agent": "router_agent",
@@ -41,15 +38,16 @@ class AgentOrchestrator:
                 "result": routing_result,
                 "timestamp": datetime.now().isoformat()
             })
-            
+
             # Step 2: Handle with appropriate agent
             assigned_agent = routing_result["assigned_agent"]
             agent_endpoint = self.agent_endpoints[assigned_agent.replace("_agent", "")]
-            
+
             handling_response = requests.post(
                 f"{agent_endpoint}/handle_ticket",
                 json={"ticket": ticket_dict}
             )
+            handling_response.raise_for_status()
             handling_result = handling_response.json()
             conversation_log.append({
                 "agent": assigned_agent,
@@ -57,7 +55,7 @@ class AgentOrchestrator:
                 "result": handling_result,
                 "timestamp": datetime.now().isoformat()
             })
-            
+
             return {
                 "status": "completed",
                 "ticket_id": ticket.ticket_id,
@@ -65,7 +63,7 @@ class AgentOrchestrator:
                 "final_response": handling_result["response"]["content"],
                 "escalated": handling_result.get("escalated", False)
             }
-            
+
         except Exception as e:
             return {
                 "status": "error",

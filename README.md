@@ -61,21 +61,36 @@ If you prefer to run services manually on your machine:
 1. **Install Dependencies**
 pip install -r requirements.txt
 
+2. **Start Redis** (required — agents no longer fall back silently if Redis is
+   unreachable; they log a warning and report `degraded` on their `/health` endpoint,
+   and escalation messages will not be recorded)
+redis-server
+(or `docker run -p 6379:6379 redis:7-alpine`)
 
-2. **Start All Agents**
+3. **Start All Agents** (run each from the project root, using `-m` so the
+   `shared` package resolves correctly)
 Terminal 1: Router Agent
-python agents/router_agent/main.py
+python -m agents.router_agent.main
 
 Terminal 2: Technical Agent
-python agents/technical_agent/main.py
+python -m agents.technical_agent.main
 
 Terminal 3: Account Agent
-python agents/account_agent/main.py
+python -m agents.account_agent.main
 
 
-3. **Launch Demo Interface**
+4. **Launch Demo Interface**
 streamlit run demo/streamlit_interface.py
 
+## 🧪 Running Tests
+
+pip install -r requirements.txt
+pytest
+
+The suite covers the routing/classification, knowledge-base matching, and license-capacity
+logic directly, plus FastAPI `TestClient` tests for each agent's HTTP endpoints (including
+`/health`). No running Redis or Docker is required — agents degrade gracefully when Redis
+is unreachable rather than failing to start.
 
 ## 📊 Demo Scenarios
 

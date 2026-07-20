@@ -1,37 +1,52 @@
-import redis
 import json
-from typing import Dict, Any
+import logging
 import uuid
+from typing import Any, Dict, Optional
+
+import redis
+
+from shared.config import REDIS_URL
+
+logger = logging.getLogger(__name__)
+
+
+class MessageQueueError(RuntimeError):
+    """Raised when a message cannot be sent or read because Redis is unavailable."""
+
 
 class MessageQueue:
-    def __init__(self, host='localhost', port=6379, db=0):
+    def __init__(self, redis_url: str = REDIS_URL):
+        self.redis_url = redis_url
+        self.redis_client = redis.Redis.from_url(redis_url, decode_responses=True)
         try:
-            self.redis_client = redis.Redis(host=host, port=port, db=db, decode_responses=True)
             self.redis_client.ping()
-        except:
-            # Fallback to in-memory queue for demo
-            self.redis_client = None
-            self.memory_queue = {}
-    
-    def send_message(self, queue_name: str, message: Dict[Any, Any]) -> str:
+        except redis.RedisError as e:
+            logger.warning(
+                "Cannot connect to Redis at %s (%s). Queue operations will fail until "
+                "Redis is reachable — there is no in-memory fallback.",
+                redis_url, e,
+            )
+
+    def is_healthy(self) -> bool:
+        try:
+            return bool(self.redis_client.ping())
+        except redis.RedisError:
+            return False
+
+    def send_message(self, queue_name: str, message: Dict[str, Any]) -> str:
         message_id = str(uuid.uuid4())
-        message['message_id'] = message_id
-        
-        if self.redis_client:
+        message["message_id"] = message_id
+        try:
             self.redis_client.lpush(queue_name, json.dumps(message))
-        else:
-            if queue_name not in self.memory_queue:
-                self.memory_queue[queue_name] = []
-            self.memory_queue[queue_name].append(message)
-        
+        except redis.RedisError as e:
+            raise MessageQueueError(f"Failed to enqueue message to '{queue_name}': {e}") from e
         return message_id
-    
-    def receive_message(self, queue_name: str) -> Dict[Any, Any]:
-        if self.redis_client:
-            message = self.redis_client.brpop(queue_name, timeout=1)
-            if message:
-                return json.loads(message[1])
-        else:
-            if queue_name in self.memory_queue and self.memory_queue[queue_name]:
-                return self.memory_queue[queue_name].pop(0)
+
+    def receive_message(self, queue_name: str) -> Optional[Dict[str, Any]]:
+        try:
+            result = self.redis_client.brpop(queue_name, timeout=1)
+        except redis.RedisError as e:
+            raise MessageQueueError(f"Failed to read from '{queue_name}': {e}") from e
+        if result:
+            return json.loads(result[1])
         return None
