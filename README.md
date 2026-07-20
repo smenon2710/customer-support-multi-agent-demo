@@ -102,5 +102,12 @@ streamlit run demo/streamlit_interface.py
 
 Access the interactive demo at `http://localhost:8501` to see agents collaborating in real-time to solve enterprise Tableau support scenarios.
 
+## 🗺️ Roadmap
+
+This repository is currently a demo (rule-based agents, in-memory data, no persistence).
+See [`docs/UPGRADE_PLAN.md`](docs/UPGRADE_PLAN.md) for the phased plan to turn it into a
+working system: persistence, a hybrid rules+LLM pipeline (OpenRouter free-tier models,
+RAG-based technical support), a human-in-the-loop escalation queue, and cloud deployment.
+
 ---
 *Built as a portfolio demonstration of multi-agent AI coordination and enterprise software architecture.*
