@@ -264,19 +264,31 @@ instead of hallucinating steps.
 
 ---
 
-## Phase 3 — Close the escalation loop
+## Phase 3 — Close the escalation loop ✅ Done
 
 Goal: escalations go somewhere a human can see and act on.
 
-1. **Escalation consumer.** A small worker (can live in the demo app process initially)
-   that drains `escalation_queue` / `manager_approval_queue` into the `escalations` table
-   with status `pending`.
-2. **Human review UI.** New Streamlit tab: pending escalations, ticket context, the agent's
-   draft response, and Approve / Edit / Reject actions that update the ticket and mark the
-   escalation resolved. This is the human-in-the-loop that makes "87% automated" a
-   measurable number instead of a slogan.
-3. **Ticket status lifecycle.** `open → in_progress → resolved | escalated → closed`,
-   driven by the orchestrator and the review UI.
+**Implementation notes vs. the sketch above, two deliberate deviations (documented in `CLAUDE.md`):**
+(1) **No escalation-consumer worker.** Step 1 below assumed the `escalations` table would be populated by
+draining the Redis queue — but Phase 1 already writes that table synchronously and atomically, *before* the
+best-effort Redis push, which is a stronger durability guarantee than an async drain would give (no window
+where a crashed drain worker loses a message between read and write). `escalation_queue`/
+`manager_approval_queue` remain genuinely unconsumed today — they're notification-only infrastructure for a
+future integration (Slack, email) that doesn't exist yet. (2) **Simplified status lifecycle.** Step 3's
+`open → in_progress → resolved | escalated → closed` became the existing 3-state `tickets.status`
+(`open`/`resolved`/`escalated`) plus a `human_review` audit event recording who reviewed what and when —
+there's no downstream workflow that would act on `in_progress`/`closed` distinctly, so adding them was
+speculative complexity with no consumer.
+
+1. ~~**Escalation consumer.**~~ Superseded by Phase 1 — see above.
+2. **Human review UI.** New Streamlit tab (`demo/streamlit_interface.py`'s `human_review_interface`,
+   backed by `shared/escalation_review.py`): pending escalations (`list_pending_escalations`), ticket
+   context, the agent's draft response, and **Approve & Send** / **Send Edited Response** / **Reject**
+   actions. Approve/Edit call `approve_escalation` (`ticket.status="resolved"`, `resolution=<final text>`,
+   `escalation.resolved=True`); Reject calls `reject_escalation` (`escalation.resolved=True` only — the
+   ticket stays `escalated` for manual handling outside the system). Both record a `human_review`
+   `TicketEvent` for audit. A sidebar badge shows the pending count.
+3. ~~**Ticket status lifecycle.**~~ Simplified — see above.
 
 Deliverable: no message is ever fire-and-forget; every escalation is visible and actionable.
 

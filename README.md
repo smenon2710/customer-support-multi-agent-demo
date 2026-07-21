@@ -144,6 +144,15 @@ unset, and adds real capability when it's configured:
   deterministic — capacity checks and provisioning run against `TableauBackend`, never the
   model's judgment.
 
+## 🧑‍💼 Human Review
+
+Anything an agent escalates lands in the **Human Review** tab, not a fire-and-forget queue.
+For each pending escalation you see the full ticket context and the agent's draft response,
+and can **Approve & Send** it as-is, **edit it** before sending, or **Reject** it (leaving the
+ticket escalated for manual handling outside the system). Every decision is recorded as a
+`human_review` ticket event — who reviewed it, what they decided, and the final text — so
+there's a full audit trail from ticket submission through resolution.
+
 ## 📊 Demo Scenarios
 
 - **🚨 Critical**: Trading dashboard outages (2-second resolution)
@@ -177,10 +186,11 @@ See [`docs/UPGRADE_PLAN.md`](docs/UPGRADE_PLAN.md) for the phased plan to turn t
 demo into a working system. Done so far: a single orchestration path with env-driven config
 and real failure handling (Phase 0); persistence — tickets, departments/users/licenses, and
 the technical knowledge base now live in a database instead of Python literals, with a real
-(simulated) Tableau backend and a dashboard that reports actual numbers (Phase 1); and hybrid
+(simulated) Tableau backend and a dashboard that reports actual numbers (Phase 1); hybrid
 intelligence — rules stay the fast/free default, an OpenRouter LLM handles ambiguous
-classification and RAG-based technical responses when configured (Phase 2). Still ahead: a
-human-in-the-loop escalation queue and cloud deployment.
+classification and RAG-based technical responses when configured (Phase 2); and a closed
+escalation loop — a Human Review tab with Approve/Edit/Reject actions and a full audit trail,
+so nothing an agent escalates is ever fire-and-forget (Phase 3). Still ahead: cloud deployment.
 
 ---
 *Built as a portfolio demonstration of multi-agent AI coordination and enterprise software architecture.*

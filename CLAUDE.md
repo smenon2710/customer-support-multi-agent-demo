@@ -7,7 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A portfolio project simulating a multi-agent customer support system for Tableau issues at a fictional
 fintech company. Three FastAPI microservices (router, technical, account) coordinate over HTTP, backed by
 Redis (messaging), Postgres/SQLite (persistence), and an optional OpenRouter LLM for the cases deterministic
-rules can't confidently handle, fronted by a Streamlit demo UI.
+rules can't confidently handle, fronted by a Streamlit demo UI with a human-in-the-loop review queue for
+anything an agent escalates.
 
 ## Running the system
 
@@ -104,9 +105,12 @@ There is no in-memory fallback — if Redis is unreachable at construction it lo
 `is_healthy()` (exposed via each agent's `/health`) returns `False`; `send_message`/`receive_message` raise
 `MessageQueueError` on failure rather than silently dropping the message. Callers that queue escalations
 (technical and account agents) catch `MessageQueueError` and log it rather than failing the ticket response
-— an escalation that couldn't be queued is visible in logs, not silently lost. The router agent's own
-`{target_agent}_queue` push in `/route_ticket` is vestigial: nothing consumes it (the actual handoff is the
-orchestrator's direct HTTP call to `/handle_ticket`), so it's wrapped the same way and never blocks routing.
+— an escalation that couldn't be queued is still visible (it's already in the `escalations` table, written
+before the Redis push is attempted — see Persistence and Escalation review below) rather than silently lost.
+The router agent's own `{target_agent}_queue` push in `/route_ticket` is vestigial: nothing consumes it (the
+actual handoff is the orchestrator's direct HTTP call to `/handle_ticket`), so it's wrapped the same way and
+never blocks routing. `escalation_queue`/`manager_approval_queue` are likewise unconsumed by anything in this
+codebase today — see Escalation review for why that's a deliberate, not an accidental, gap.
 
 **Data models** (`shared/models.py`): `SupportTicket` and `AgentMessage` are the only Pydantic models;
 `category`/`priority`/`assigned_agent` on a ticket start `None` and are filled in by the router. Always
@@ -163,6 +167,30 @@ matched article's *own* `escalate` flag rather than force-escalating outright (w
 original code sketch did) — a missing/rate-limited API key must not make an already-working autonomous
 resolution start escalating; the LLM only improves *how* the answer reads, not *whether* the system can
 answer at all.
+
+**Escalation review** (`shared/escalation_review.py`): `list_pending_escalations(db)` returns unresolved
+`Escalation` rows (joined with their `Ticket` for context and the agent's draft `resolution` text) — this is
+what backs the Streamlit "Human Review" tab. `approve_escalation(db, escalation_id, final_response,
+reviewer)` sets `ticket.status="resolved"`/`resolution=final_response`/`resolved_at`, marks
+`escalation.resolved=True`, and records a `human_review` `TicketEvent` (`payload: {"decision": "approved",
+"final_response": ...}`). `reject_escalation(...)` marks the escalation resolved (removing it from the
+pending queue) and records the audit event, but deliberately leaves `ticket.status` at `"escalated"` — reject
+means "a human is handling this outside the system," not "resolved." Neither function touches
+`ticket.escalated` — that flag is a historical fact ("the AI escalated this"), not a pending-review flag, so
+it stays `True` even after a human closes the ticket out; `metrics.compute_ticket_metrics()`'s escalation
+rate depends on that not changing after review. Both raise `ValueError` for an unknown `escalation_id` —
+callers (the Streamlit tab) don't currently catch this, so a stale escalation ID would surface as an
+uncaught exception in the UI; not a concern in practice since the tab always re-fetches the pending list on
+each rerun.
+
+**Deviations from the plan doc, Phase 3:** (1) the plan called for "a small worker that drains
+`escalation_queue`/`manager_approval_queue` into the `escalations` table" — skipped, because Phase 1 already
+writes that table synchronously and atomically *before* the best-effort Redis push, which is a stronger
+durability guarantee than draining a queue asynchronously would provide (no risk of a drain worker crashing
+between reading and writing). (2) the plan's `open → in_progress → resolved | escalated → closed` ticket
+status lifecycle was simplified to the existing 3-state `tickets.status` field (`open`/`resolved`/
+`escalated`) plus the `human_review` audit event — there's no downstream workflow (customer notification,
+reopen flow, etc.) that would consume `in_progress`/`closed` states, so adding them would be speculative.
 
 **Unused/dead code:** `data/mock_tickets.json` and `data/company_data.json` are still not read by any Python
 code. `data/kb_articles.json` is now used — by `scripts/seed_db.py` only, not read at agent runtime (the

@@ -14,6 +14,7 @@ import streamlit as st
 from shared.config import AGENT_ENDPOINTS
 from shared.db.metrics import compute_ticket_metrics
 from shared.db.session import SessionLocal
+from shared.escalation_review import approve_escalation, list_pending_escalations, reject_escalation
 from shared.models import SupportTicket
 from shared.orchestrator import AgentOrchestrator
 from shared.tableau_service import SimulatedTableauBackend
@@ -62,8 +63,19 @@ def main():
     agent_status = check_agent_status()
     display_agent_status(agent_status)
 
+    db = SessionLocal()
+    try:
+        pending_escalations = list_pending_escalations(db)
+    finally:
+        db.close()
+
+    if pending_escalations:
+        st.sidebar.warning(f"⚠️ {len(pending_escalations)} escalation(s) awaiting review")
+
     # Main interface tabs
-    tab1, tab2, tab3 = st.tabs(["🎯 Live Demo", "📊 Predefined Scenarios", "🔧 System Architecture"])
+    tab1, tab2, tab3, tab4 = st.tabs(
+        ["🎯 Live Demo", "📊 Predefined Scenarios", "🧑‍💼 Human Review", "🔧 System Architecture"]
+    )
 
     with tab1:
         live_demo_interface()
@@ -72,6 +84,9 @@ def main():
         predefined_scenarios()
 
     with tab3:
+        human_review_interface(pending_escalations)
+
+    with tab4:
         system_architecture()
 
 
@@ -255,6 +270,63 @@ def predefined_scenarios():
                 display_agent_conversation(st.session_state[f'scenario_result_{i}'])
 
 
+def human_review_interface(pending):
+    """Human-in-the-loop review queue for tickets the AI agents escalated."""
+    st.header("🧑‍💼 Human Review Queue")
+    st.markdown("Tickets the AI agents escalated, waiting for a human decision.")
+
+    if not pending:
+        st.success("✅ No escalations pending review.")
+        return
+
+    reviewer = st.text_input("Reviewing as", "manager@fintechanalytics.com", key="reviewer_email")
+    st.info(f"**{len(pending)}** escalation(s) awaiting review.")
+
+    for esc in pending:
+        with st.expander(f"🎫 {esc.ticket_id} — {esc.subject} ({esc.department})", expanded=False):
+            st.write(f"**Escalated by**: {esc.escalated_by}  |  **Queue**: {esc.queue_name}")
+            st.write(f"**Reason**: {esc.reason}")
+            st.write(f"**Submitted**: {esc.created_at.strftime('%Y-%m-%d %H:%M UTC')}")
+            st.write(f"**Description**: {esc.description}")
+
+            st.markdown("**Draft response** — edit before sending, or send as-is:")
+            edited_response = st.text_area(
+                "Draft response",
+                value=esc.draft_response or "",
+                key=f"review_text_{esc.escalation_id}",
+                label_visibility="collapsed",
+                height=150,
+            )
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                if st.button("✅ Approve & Send", key=f"approve_{esc.escalation_id}"):
+                    db = SessionLocal()
+                    try:
+                        approve_escalation(db, esc.escalation_id, esc.draft_response or "", reviewer=reviewer)
+                    finally:
+                        db.close()
+                    st.rerun()
+            with col2:
+                if st.button("✏️ Send Edited Response", key=f"edit_{esc.escalation_id}"):
+                    db = SessionLocal()
+                    try:
+                        approve_escalation(db, esc.escalation_id, edited_response, reviewer=reviewer)
+                    finally:
+                        db.close()
+                    st.rerun()
+            with col3:
+                if st.button("❌ Reject", key=f"reject_{esc.escalation_id}"):
+                    db = SessionLocal()
+                    try:
+                        reject_escalation(
+                            db, esc.escalation_id, "Handled manually outside the system.", reviewer=reviewer
+                        )
+                    finally:
+                        db.close()
+                    st.rerun()
+
+
 def system_architecture():
     """Display system architecture information"""
     st.header("🔧 Multi-Agent System Architecture")
@@ -315,7 +387,7 @@ def system_architecture():
                       ↓
     Specialized Response → User Resolution
                       ↓
-    Escalation (if needed) → Human Specialist
+    Escalation (if needed) → Human Review Queue → Approve / Edit / Reject
     ```
     """)
 
