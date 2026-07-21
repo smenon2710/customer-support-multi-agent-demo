@@ -197,6 +197,16 @@ def live_demo_interface():
     """Ticket submission form"""
     st.header("🎯 Submit a Support Ticket")
 
+    # Apply any pending reset before the widgets below are instantiated — Streamlit
+    # forbids writing to a widget's session_state key after that widget has already
+    # been created in the same run, so a reset requested at the end of a submission
+    # (the previous run) has to be applied here, at the very start of the next run.
+    if st.session_state.pop("_reset_ticket_form", False):
+        st.session_state["ticket_description"] = ""
+        st.session_state["ticket_subject_choice"] = _top_subjects()[0]
+        st.session_state["ticket_other_subject"] = ""
+        st.session_state["_ticket_just_submitted"] = True
+
     col1, col2 = st.columns([1, 1])
 
     with col1:
@@ -207,16 +217,23 @@ def live_demo_interface():
         department = directory[user_email]
         st.caption(f"Department: **{department}**")
 
-        subject_choice = st.selectbox("Subject", _top_subjects() + ["Other"])
+        subject_choice = st.selectbox("Subject", _top_subjects() + ["Other"], key="ticket_subject_choice")
         if subject_choice == "Other":
-            subject = st.text_input("Briefly describe your issue", "")
+            subject = st.text_input("Briefly describe your issue", key="ticket_other_subject")
         else:
             subject = subject_choice
 
-        description = st.text_area("Problem Description",
-            "My dashboard is loading slowly and showing outdated data.")
+        st.session_state.setdefault(
+            "ticket_description", "My dashboard is loading slowly and showing outdated data."
+        )
+        description = st.text_area("Problem Description", key="ticket_description")
 
-        if st.button("🚀 Submit Ticket", type="primary"):
+        submit_clicked = st.button("🚀 Submit Ticket", type="primary")
+
+        if st.session_state.pop("_ticket_just_submitted", False):
+            st.success("Ticket submitted — form is reset and ready for a new one.")
+
+        if submit_clicked:
             ticket = SupportTicket(
                 ticket_id=f"T{uuid.uuid4().hex[:6].upper()}",
                 user_email=user_email,
@@ -233,8 +250,13 @@ def live_demo_interface():
             ):
                 result = orchestrator.process_support_ticket(ticket)
 
-            # Store in session state for display
             st.session_state['last_result'] = result
+
+            # Reset the form so it's visually obvious this isn't still showing what
+            # was just submitted — applied at the top of the next run (see above),
+            # not here, since these widgets already rendered earlier in this run.
+            st.session_state["_reset_ticket_form"] = True
+            st.rerun()
 
     with col2:
         st.subheader("Agent Coordination Results")

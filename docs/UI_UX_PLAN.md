@@ -146,3 +146,27 @@ resolution on the first repeat, no occurrence threshold) before implementing.
   then `"Resolved ticket via cache"`, proving the cache path was taken rather than a
   coincidence.
 - `CLAUDE.md`'s Technical agent section updated to describe the cache-first flow.
+
+## Follow-up 4: form reset + confirmation after submit
+
+Identified as the top usability gap in a follow-up review: after submitting, the form kept
+its old values with no signal it was ready for a new ticket — a real user could be unsure
+whether to resubmit, risking an accidental duplicate.
+
+- `Subject`, `description`, and the "Other" text field are now keyed widgets
+  (`ticket_subject_choice`, `ticket_description`, `ticket_other_subject`) and get reset to
+  their defaults after a successful submission, plus an `st.success("Ticket submitted — form
+  is reset and ready for a new one.")` confirmation.
+- **A real Streamlit constraint discovered during verification, not assumed**: you cannot
+  write to `st.session_state[key]` for a key that already backs a widget instantiated
+  *earlier in the same script run* — doing so immediately after `orchestrator.process_support_ticket()`
+  raised `StreamlitAPIException` in a live `AppTest` run against the real backend. Fixed by
+  setting a `_reset_ticket_form` flag before `st.rerun()` instead, and applying the actual
+  resets at the very top of `live_demo_interface()` on the *next* run, before any widget in
+  the function has been instantiated.
+- Email and department are deliberately not reset — a user submitting multiple tickets is
+  likely doing so on behalf of the same identity.
+- Verified via `AppTest` against the real backend: changed the description to custom text,
+  submitted, and confirmed the description field cleared, the subject dropdown reset to the
+  top-ranked choice, the confirmation message appeared, and the result still rendered
+  correctly in the right-hand column — all with no exception.
