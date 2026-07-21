@@ -66,6 +66,11 @@ build`, and an optional live LLM smoke test (`scripts/llm_smoke_test.py`) gated 
 future caller use it — there is no duplicate implementation). It POSTs to the router agent's
 `/route_ticket` (classifies category + priority, determines the target agent), then POSTs to
 that agent's `/handle_ticket`. Agent endpoints come from `shared/config.py`'s `AGENT_ENDPOINTS`.
+Both calls carry a 90s timeout (`AGENT_REQUEST_TIMEOUT_SECONDS`) — long enough to ride out a
+Render free-tier cold start (see Cloud deployment below) without hanging indefinitely if an agent
+is genuinely unreachable. A `ConnectionError`/`Timeout` specifically (as opposed to any other
+failure) gets a friendly `COLD_START_MESSAGE` instead of the raw exception text, since that's the
+shape a sleeping free-tier service takes from the caller's side.
 
 **Agent responsibilities** (each hybrid: deterministic rules first, LLM only when rules are weak/absent —
 see Hybrid intelligence below for the shared pattern):

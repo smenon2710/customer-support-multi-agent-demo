@@ -10,6 +10,18 @@ from shared.models import SupportTicket
 configure_logging()
 logger = logging.getLogger(__name__)
 
+# Render's free-tier web services sleep after ~15 minutes idle; the first request
+# after a quiet period can take up to about a minute to wake them back up (see
+# docs/DEPLOYMENT.md). This bounds how long we'll wait for that, rather than hanging
+# indefinitely (the default with no timeout at all).
+AGENT_REQUEST_TIMEOUT_SECONDS = 90
+
+COLD_START_MESSAGE = (
+    "One or more agents didn't respond in time. If this is the free-tier deployment, "
+    "it sleeps after ~15 minutes idle and the first request after a quiet period can "
+    "take up to a minute to wake it back up — please try again in a moment."
+)
+
 
 class AgentOrchestrator:
     def __init__(self):
@@ -37,6 +49,7 @@ class AgentOrchestrator:
                 f"{self.agent_endpoints['router']}/route_ticket",
                 json=ticket_dict,
                 headers=self.headers,
+                timeout=AGENT_REQUEST_TIMEOUT_SECONDS,
             )
             routing_response.raise_for_status()
             routing_result = routing_response.json()
@@ -55,6 +68,7 @@ class AgentOrchestrator:
                 f"{agent_endpoint}/handle_ticket",
                 json={"ticket": ticket_dict},
                 headers=self.headers,
+                timeout=AGENT_REQUEST_TIMEOUT_SECONDS,
             )
             handling_response.raise_for_status()
             handling_result = handling_response.json()
@@ -74,6 +88,14 @@ class AgentOrchestrator:
                 "escalated": handling_result.get("escalated", False)
             }
 
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            logger.warning("Ticket processing failed - agent unreachable: %s", e)
+            return {
+                "status": "error",
+                "error": COLD_START_MESSAGE,
+                "ticket_id": ticket.ticket_id,
+                "conversation": conversation_log
+            }
         except Exception as e:
             logger.warning("Ticket processing failed: %s", e)
             return {

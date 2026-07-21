@@ -5,6 +5,7 @@ import sys
 # sys.path, and this app imports the top-level `shared` package.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import concurrent.futures
 import uuid
 from datetime import datetime
 
@@ -39,48 +40,39 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS for better styling
-st.markdown("""
-<style>
-    .agent-card {
-        padding: 1rem;
-        border-radius: 0.5rem;
-        margin: 0.5rem 0;
-        border-left: 4px solid #ff6b6b;
-    }
-    .router-card { border-left-color: #4ecdc4; }
-    .technical-card { border-left-color: #45b7d1; }
-    .account-card { border-left-color: #96ceb4; }
-    .success-box {
-        padding: 1rem;
-        background-color: #d4edda;
-        border: 1px solid #c3e6cb;
-        border-radius: 0.25rem;
-        color: #155724;
-    }
-</style>
-""", unsafe_allow_html=True)
-
 orchestrator = AgentOrchestrator()
 
 
 def main():
     st.title("🤖 Multi-Agent Tableau Customer Support System")
     st.markdown("**Enterprise-Scale Support Automation for FinTech Analytics Corp**")
-
-    # Sidebar configuration
-    st.sidebar.header("System Configuration")
-    st.sidebar.info("**Company**: FinTech Analytics Corp\n**Users**: 5,200+ Tableau users\n**Departments**: 8 business units")
-
-    # Check agent status
-    agent_status = check_agent_status()
-    display_agent_status(agent_status)
+    st.caption(
+        "A portfolio project simulating a multi-agent support system: independent "
+        "FastAPI agents (router → technical/account) coordinate over HTTP, backed by "
+        "Postgres persistence and an optional LLM fallback for cases deterministic "
+        "rules can't confidently handle. See **System Architecture** for the full "
+        "picture, or submit a ticket below to see it work."
+    )
 
     db = SessionLocal()
     try:
         pending_escalations = list_pending_escalations(db)
+        site_status = SimulatedTableauBackend(db).get_site_status()
     finally:
         db.close()
+
+    # Sidebar configuration
+    st.sidebar.header("System Configuration")
+    st.sidebar.info(
+        f"**Company**: FinTech Analytics Corp\n"
+        f"**Users**: {site_status.total_active_users:,} Tableau users\n"
+        f"**Departments**: {site_status.total_departments} business units"
+    )
+
+    # Check agent status
+    agent_status = check_agent_status()
+    display_agent_status(agent_status)
+    display_cold_start_banner(agent_status)
 
     if pending_escalations:
         st.sidebar.warning(f"⚠️ {len(pending_escalations)} escalation(s) awaiting review")
@@ -103,23 +95,27 @@ def main():
         system_architecture()
 
 
+def _agent_is_online(url: str) -> bool:
+    try:
+        response = requests.get(f"{url}/health", timeout=2)
+        return response.status_code == 200
+    except requests.RequestException:
+        return False
+
+
 def check_agent_status():
-    """Check if all agents are running"""
+    """Check if all agents are running, in parallel — this runs on every Streamlit
+    rerun (every button click, not just first page load), so keeping it to the
+    slowest single check rather than the sum of three matters for responsiveness."""
     agents = {
         "Router Agent": AGENT_ENDPOINTS["router"],
         "Technical Agent": AGENT_ENDPOINTS["technical"],
         "Account Agent": AGENT_ENDPOINTS["account"],
     }
 
-    status = {}
-    for name, url in agents.items():
-        try:
-            response = requests.get(f"{url}/health", timeout=2)
-            status[name] = "🟢 Online" if response.status_code == 200 else "🔴 Offline"
-        except requests.RequestException:
-            status[name] = "🔴 Offline"
-
-    return status
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(agents)) as executor:
+        futures = {name: executor.submit(_agent_is_online, url) for name, url in agents.items()}
+        return {name: ("🟢 Online" if future.result() else "🔴 Offline") for name, future in futures.items()}
 
 
 def display_agent_status(status):
@@ -127,6 +123,20 @@ def display_agent_status(status):
     st.sidebar.header("Agent Status")
     for agent, state in status.items():
         st.sidebar.markdown(f"**{agent}**: {state}")
+
+
+def display_cold_start_banner(status):
+    """Prominent, actionable banner when any agent is offline — likely a free-tier
+    cold start rather than a real outage, so tell the user what's actually going on
+    instead of leaving them looking at an unexplained red dot in the sidebar."""
+    if all(state.startswith("🟢") for state in status.values()):
+        return
+    st.warning(
+        "Some agents are showing offline. If this is the free-tier deployment, it "
+        "sleeps after ~15 minutes idle and the first request after a quiet period "
+        "can take up to a minute to wake it back up — try submitting a ticket "
+        "anyway, it should resolve once the agent finishes waking up."
+    )
 
 
 def live_demo_interface():
@@ -157,7 +167,10 @@ def live_demo_interface():
                 messages=[],
             )
 
-            with st.spinner("🤖 Agents are collaborating to resolve your issue..."):
+            with st.spinner(
+                "Agents are collaborating to resolve your issue — this can take "
+                "longer than usual if a free-tier agent is waking up from idle..."
+            ):
                 result = orchestrator.process_support_ticket(ticket)
 
             # Store in session state for display
@@ -173,7 +186,7 @@ def live_demo_interface():
 def display_agent_conversation(result):
     """Display the agent conversation flow"""
     if result["status"] == "error":
-        st.error(f"❌ Error: {result['error']}")
+        st.error(result["error"])
         return
 
     conversation = {entry["action"]: entry["result"] for entry in result["conversation"]}
@@ -182,36 +195,29 @@ def display_agent_conversation(result):
     agent_type = routing["assigned_agent"]
 
     # Routing step
-    st.markdown('<div class="agent-card router-card">', unsafe_allow_html=True)
-    st.markdown("**🧭 Router Agent**")
-    st.write(f"**Classification**: {routing['category']} | **Priority**: {routing['priority']}")
-    st.write(f"**Decision**: Routed to {agent_type}")
-    st.write(f"**Confidence**: {routing['routing_message']['confidence_score']:.0%}")
-    st.markdown('</div>', unsafe_allow_html=True)
+    with st.container(border=True):
+        st.markdown("**🧭 Router Agent**")
+        st.write(f"**Classification**: {routing['category']} | **Priority**: {routing['priority']}")
+        st.write(f"**Decision**: Routed to {agent_type}")
+        st.write(f"**Confidence**: {routing['routing_message']['confidence_score']:.0%}")
 
     # Handling step
-    card_class = "technical-card" if "technical" in agent_type else "account-card"
     agent_icon = "🔧" if "technical" in agent_type else "👤"
+    with st.container(border=True):
+        st.markdown(f"**{agent_icon} {agent_type.replace('_', ' ').title()}**")
 
-    st.markdown(f'<div class="agent-card {card_class}">', unsafe_allow_html=True)
-    st.markdown(f"**{agent_icon} {agent_type.replace('_', ' ').title()}**")
+        response_content = handling["response"]["content"]
+        st.markdown(response_content)
 
-    response_content = handling["response"]["content"]
-    st.markdown(response_content)
+        if handling.get("escalated"):
+            st.warning("Escalated — this ticket requires additional specialist review.")
+        else:
+            st.success("Resolved — solution provided by AI agent.")
 
-    if handling.get("escalated"):
-        st.warning("⚠️ **Escalated**: This ticket requires additional specialist review.")
-    else:
-        st.success("✅ **Resolved**: Solution provided by AI agent.")
-
-    st.write(f"**Confidence**: {handling['response']['confidence_score']:.0%}")
-    st.markdown('</div>', unsafe_allow_html=True)
+        st.write(f"**Confidence**: {handling['response']['confidence_score']:.0%}")
 
     # Final result
-    st.markdown('<div class="success-box">', unsafe_allow_html=True)
-    st.markdown(f"**✅ Ticket {result['ticket_id']} processed successfully!**")
-    st.markdown("**Resolution Time**: < 2 seconds | **Agent Coordination**: Successful")
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.success(f"Ticket {result['ticket_id']} processed successfully! Resolution time: < 2 seconds.")
 
 
 def predefined_scenarios():
@@ -272,14 +278,16 @@ def predefined_scenarios():
                         messages=[],
                     )
 
-                    with st.spinner("🤖 Processing scenario..."):
+                    with st.spinner(
+                        "Processing scenario — this can take longer than usual if a "
+                        "free-tier agent is waking up from idle..."
+                    ):
                         result = orchestrator.process_support_ticket(ticket)
 
                     st.session_state[f'scenario_result_{i}'] = result
 
             # Show result if available
             if f'scenario_result_{i}' in st.session_state:
-                st.markdown("**🤖 Agent Response:**")
                 display_agent_conversation(st.session_state[f'scenario_result_{i}'])
 
 
@@ -424,7 +432,7 @@ def system_architecture():
         st.markdown("""
         **Backend**
         - FastAPI (Agent APIs)
-        - Python 3.9+
+        - Python 3.11+
         - Pydantic (Data Models)
         - Uvicorn (ASGI Server)
         """)
