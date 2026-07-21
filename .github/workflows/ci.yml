@@ -37,17 +37,18 @@ jobs:
 
   llm-smoke-test:
     runs-on: ubuntu-latest
+    # The secrets context isn't allowed in any `if:` expression, job- or
+    # step-level (GitHub Actions rejects the whole workflow file if you try) —
+    # so the secret is copied into an env var here, and the gate below checks
+    # that instead.
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - run: pip install -r requirements.txt
-      # The secrets context isn't available in a job-level `if:` (GitHub Actions
-      # rejects the whole workflow file if you try), only in a step-level one —
-      # so the gate has to live here, not on the job.
       - name: Run live LLM smoke test
-        if: ${{ secrets.OPENROUTER_API_KEY != '' }}
+        if: ${{ env.OPENROUTER_API_KEY != '' }}
         run: python -m scripts.llm_smoke_test
-        env:
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
