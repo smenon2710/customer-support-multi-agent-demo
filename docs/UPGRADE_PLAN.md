@@ -262,6 +262,22 @@ Deliverable: any realistically-phrased ticket gets classified correctly and rece
 grounded, non-canned response; the demo scenarios still pass; a nonsense ticket escalates
 instead of hallucinating steps.
 
+**Real-world update (post-deployment):** the "model churn" risk above wasn't hypothetical —
+the originally-configured `meta-llama/llama-3.3-70b-instruct:free` was discontinued by
+OpenRouter (confirmed via a live smoke test returning HTTP 404: *"This model is unavailable
+for free... use this slug instead: meta-llama/llama-3.3-70b-instruct"* — the paid variant).
+`CLASSIFIER_MODEL`/`GENERATION_MODEL` now default to **`openrouter/free`** instead of a
+single pinned `:free` model — OpenRouter's own free-tier router, confirmed `cost: 0` per
+call, which randomly selects among ~16 currently-free models and specifically filters for
+ones supporting the features a request needs (including structured JSON output, which this
+project always requests). This structurally avoids re-hitting this exact failure mode: a
+single model being deprecated no longer breaks the whole hybrid path. Trade-off: which
+underlying model serves a given call is non-deterministic and includes reasoning models
+(e.g. Nvidia Nemotron) that spend part of the token budget on a hidden reasoning trace
+before the final answer — `complete_json`'s `max_tokens=1024` has held up fine in testing,
+but if `invalid_response`/empty-content failures show up in the LLM Availability panel, that
+budget is the first thing to reconsider.
+
 ---
 
 ## Phase 3 — Close the escalation loop ✅ Done

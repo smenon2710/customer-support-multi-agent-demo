@@ -15,8 +15,8 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./support.db")
 
 # Unused until the hybrid rules+LLM pipeline lands (see docs/UPGRADE_PLAN.md Phase 2).
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
-CLASSIFIER_MODEL = os.environ.get("CLASSIFIER_MODEL", "meta-llama/llama-3.3-70b-instruct:free")
-GENERATION_MODEL = os.environ.get("GENERATION_MODEL", "meta-llama/llama-3.3-70b-instruct:free")
+CLASSIFIER_MODEL = os.environ.get("CLASSIFIER_MODEL", "openrouter/free")
+GENERATION_MODEL = os.environ.get("GENERATION_MODEL", "openrouter/free")
 
 # Shared-secret header between internal services (see shared/auth.py). Auth is
 # opt-in: unset means every agent endpoint is open, which is what local dev and
