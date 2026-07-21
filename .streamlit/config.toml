@@ -1,0 +1,6 @@
+[theme]
+# Only the accent color is set — background/text colors are deliberately left
+# unset so the app keeps following the viewer's light/dark preference
+# automatically instead of forcing one (see the dark-mode CSS bug fixed in the
+# earlier UI/UX pass, which this avoids repeating).
+primaryColor = "#2563EB"

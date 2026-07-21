@@ -150,8 +150,12 @@ def live_demo_interface():
 
         # User input form
         user_email = st.text_input("User Email", "john.analyst@fintechanalytics.com")
-        department = st.selectbox("Department",
-            ["Trading", "Risk Management", "Compliance", "Marketing", "Operations", "Finance", "Executive"])
+        department = st.pills(
+            "Department",
+            ["Trading", "Risk Management", "Compliance", "Marketing", "Operations", "Finance", "Executive"],
+            default="Trading",
+            required=True,
+        )
         subject = st.text_input("Subject", "Dashboard performance issue")
         description = st.text_area("Problem Description",
             "My trading dashboard is loading slowly and showing outdated data during market hours.")
@@ -195,9 +199,14 @@ def display_agent_conversation(result):
     agent_type = routing["assigned_agent"]
 
     # Routing step
+    priority_colors = {"critical": "red", "high": "orange", "medium": "blue", "low": "gray"}
     with st.container(border=True):
         st.markdown("**🧭 Router Agent**")
-        st.write(f"**Classification**: {routing['category']} | **Priority**: {routing['priority']}")
+        badge_col1, badge_col2 = st.columns(2)
+        with badge_col1:
+            st.badge(routing['category'].title(), icon="🏷️")
+        with badge_col2:
+            st.badge(routing['priority'].title(), color=priority_colors.get(routing['priority'], "blue"))
         st.write(f"**Decision**: Routed to {agent_type}")
         st.write(f"**Confidence**: {routing['routing_message']['confidence_score']:.0%}")
 

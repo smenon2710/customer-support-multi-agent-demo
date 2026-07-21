@@ -48,3 +48,22 @@ rationale — don't re-litigate these without asking):
 - Defensive access in `display_agent_conversation()` (currently direct nested-dict indexing with no guard against an unexpected response shape)
 - De-duplicate ticket-creation/display logic shared between `live_demo_interface()` and `predefined_scenarios()`
 - Lightweight ticket history in the Live Demo tab (currently only the single last result is kept in session state)
+
+## Follow-up: theming pass (done, separate from P0/P1 above)
+
+Requested afterward, not part of the original P0/P1 scope, but recorded here for the same
+resumability reason:
+
+- Added `.streamlit/config.toml` with a single `[theme] primaryColor` — deliberately not
+  setting `backgroundColor`/`textColor`/`base`, so the app keeps following the viewer's
+  light/dark preference automatically (the project previously had zero theme config at all).
+- Swapped the Live Demo tab's department `st.selectbox` for `st.pills` (`required=True`,
+  `default="Trading"` — preserves the old "always has a value" behavior).
+- Swapped the Router Agent card's plain "Classification: X | Priority: Y" text for
+  `st.badge` elements (priority color-coded: critical=red, high=orange, medium=blue,
+  low=gray).
+- Verified via `streamlit.testing.v1.AppTest` against the real Docker Compose backend:
+  no exceptions, pills widget defaults and submits correctly, and badge markdown
+  (`:blue-badge[...]`, `:red-badge[...]`) confirmed rendering with correct label/color by
+  walking the raw element proto tree (AppTest has no first-class `.badge` accessor, unlike
+  `.success`/`.warning`/`.button`/`.pills`).
