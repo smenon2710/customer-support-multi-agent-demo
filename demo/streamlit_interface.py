@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import concurrent.futures
 import uuid
 from datetime import datetime
+from typing import Optional
 
 import requests
 import streamlit as st
@@ -27,6 +28,7 @@ except Exception:
 
 from shared.config import AGENT_ENDPOINTS
 from shared.db.metrics import compute_llm_availability, compute_ticket_metrics
+from shared.db.models import User
 from shared.db.session import SessionLocal
 from shared.escalation_review import approve_escalation, list_pending_escalations, reject_escalation
 from shared.models import SupportTicket
@@ -79,7 +81,7 @@ def main():
 
     # Main interface tabs
     tab1, tab2, tab3, tab4 = st.tabs(
-        ["🎯 Live Demo", "📊 Predefined Scenarios", "🧑‍💼 Human Review", "🔧 System Architecture"]
+        ["🎯 Submit a Ticket", "📊 Predefined Scenarios", "🧑‍💼 Human Review", "🔧 System Architecture"]
     )
 
     with tab1:
@@ -139,26 +141,76 @@ def display_cold_start_banner(status):
     )
 
 
+def _lookup_user_department(email: str) -> Optional[str]:
+    """Look up a real user's department from the seeded directory — mirrors how a
+    real internal tool would already know who's submitting, rather than asking a
+    known employee to self-report their own department."""
+    if not email:
+        return None
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == email, User.status == "active").first()
+        return user.department.name if user else None
+    finally:
+        db.close()
+
+
+def _example_user_email() -> str:
+    """A real seeded email to use as the form's starting value, so the directory
+    lookup below succeeds by default instead of showing "not found" on first
+    load. Faker-generated per seed run (see scripts/seed_db.py), so this can't be
+    a hardcoded literal — it has to be looked up fresh."""
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.status == "active").order_by(User.id).first()
+        return user.email if user else ""
+    finally:
+        db.close()
+
+
 def live_demo_interface():
-    """Interactive demo interface"""
-    st.header("🎯 Live Support Ticket Demo")
+    """Ticket submission form"""
+    st.header("🎯 Submit a Support Ticket")
 
     col1, col2 = st.columns([1, 1])
 
     with col1:
         st.subheader("Submit Support Request")
 
-        # User input form
-        user_email = st.text_input("User Email", "john.analyst@fintechanalytics.com")
-        department = st.pills(
-            "Department",
-            ["Trading", "Risk Management", "Compliance", "Marketing", "Operations", "Finance", "Executive"],
-            default="Trading",
-            required=True,
+        user_email = st.text_input("User Email", _example_user_email())
+
+        looked_up_department = _lookup_user_department(user_email)
+        if looked_up_department:
+            st.caption(f"✓ Found in directory — Department: **{looked_up_department}**")
+            department = looked_up_department
+        else:
+            st.caption("Email not found in directory — please select your department:")
+            department = st.pills(
+                "Department",
+                ["Trading", "Risk Management", "Compliance", "Marketing", "Operations", "Finance", "Executive"],
+                default="Trading",
+                required=True,
+            )
+
+        subject_choice = st.selectbox(
+            "Subject",
+            [
+                "Dashboard loading slowly or not updating",
+                "Cannot connect to data source",
+                "Chart or visualization showing incorrect data",
+                "Need access to a new workbook or dashboard",
+                "License or permission issue",
+                "How-to / training question",
+                "Other",
+            ],
         )
-        subject = st.text_input("Subject", "Dashboard performance issue")
+        if subject_choice == "Other":
+            subject = st.text_input("Briefly describe your issue", "")
+        else:
+            subject = subject_choice
+
         description = st.text_area("Problem Description",
-            "My trading dashboard is loading slowly and showing outdated data during market hours.")
+            "My dashboard is loading slowly and showing outdated data.")
 
         if st.button("🚀 Submit Ticket", type="primary"):
             ticket = SupportTicket(
@@ -231,7 +283,7 @@ def display_agent_conversation(result):
 
 def predefined_scenarios():
     """Showcase predefined scenarios"""
-    st.header("📊 Predefined Demo Scenarios")
+    st.header("📊 Predefined Scenarios")
 
     scenarios = [
         {

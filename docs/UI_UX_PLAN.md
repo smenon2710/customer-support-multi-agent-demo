@@ -67,3 +67,27 @@ resumability reason:
   (`:blue-badge[...]`, `:red-badge[...]`) confirmed rendering with correct label/color by
   walking the raw element proto tree (AppTest has no first-class `.badge` accessor, unlike
   `.success`/`.warning`/`.button`/`.pills`).
+
+## Follow-up 2: "make it look like a real tool, not a demo"
+
+- **User email → directory lookup**: `_lookup_user_department()` queries the real seeded
+  `users` table (`shared.db.models.User`, joined to `Department`) by email. If found, the
+  department is derived and shown read-only (`✓ Found in directory — Department: **X**`)
+  instead of asking a known employee to self-report it. Only falls back to the manual
+  `st.pills` department selector when the email isn't found. The form's default email value
+  is no longer a hardcoded literal — `_example_user_email()` looks up a real seeded user at
+  render time, since `scripts/seed_db.py`'s Faker-generated emails aren't deterministic
+  across seed runs, so a hardcoded string would eventually point at a nonexistent user.
+- **Subject** changed from free text to a dropdown of 7 common issues plus "Other" at the
+  end; selecting "Other" reveals a second text input ("Briefly describe your issue") for
+  the ticket's actual subject.
+- Removed all user-facing "Demo" wording: tab label ("Live Demo" → "Submit a Ticket"),
+  the Live Demo tab's header ("Live Support Ticket Demo" → "Submit a Support Ticket"), and
+  the Predefined Scenarios tab's header ("Predefined Demo Scenarios" → "Predefined
+  Scenarios", matching its already-Demo-free tab label). The "Predefined Scenarios" tab
+  itself was kept (not asked to be removed) — only the literal word "Demo" was targeted.
+- Verified via `AppTest` against the real backend: default email resolves to a real seeded
+  user and shows the found-in-directory caption; an unknown email correctly falls back to
+  the manual department pills; selecting "Other" in the subject dropdown correctly reveals
+  the extra text field; a full ticket submission with the looked-up department still routes
+  and resolves end-to-end with no exceptions.
