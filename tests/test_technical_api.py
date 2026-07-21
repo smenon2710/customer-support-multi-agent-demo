@@ -74,6 +74,25 @@ def test_handle_ticket_records_method_and_articles_used(client, seeded_db):
     assert "Dashboard Loading Issues" in event.payload["kb_articles_used"]
 
 
+def test_second_ticket_with_same_subject_uses_cache(client, seeded_db):
+    first = client.post(
+        "/handle_ticket",
+        json=_ticket_payload("Dashboard slow", "The dashboard is slow and keeps loading."),
+    )
+    assert first.status_code == 200
+
+    second_payload = _ticket_payload("Dashboard slow", "Completely different description text.")
+    second_payload["ticket"]["ticket_id"] = "T002"
+    second = client.post("/handle_ticket", json=second_payload)
+    assert second.status_code == 200
+    assert second.json()["response"]["content"] == first.json()["response"]["content"]
+
+    event = seeded_db.query(TicketEvent).filter(
+        TicketEvent.ticket_id == "T002", TicketEvent.action == "response"
+    ).first()
+    assert event.payload["method"] == "cache"
+
+
 def test_handle_ticket_requires_token_when_configured(client, monkeypatch):
     monkeypatch.setattr(config, "INTERNAL_API_TOKEN", "secret123")
     response = client.post(

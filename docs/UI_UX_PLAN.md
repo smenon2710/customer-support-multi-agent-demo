@@ -91,3 +91,58 @@ resumability reason:
   the manual department pills; selecting "Other" in the subject dropdown correctly reveals
   the extra text field; a full ticket submission with the looked-up department still routes
   and resolves end-to-end with no exceptions.
+
+## Follow-up 3: email autocomplete + self-learning subject ranking
+
+- **Email field** changed from free text to `st.selectbox` populated from every active
+  seeded user (`_user_directory()`, `st.cache_data(ttl=300)`) — since every option is drawn
+  from the same directory used to derive department, every selection is by construction a
+  real, found user. The department pills fallback from Follow-up 2 was removed entirely
+  (no longer reachable — an unfound email can no longer be entered). Streamlit's selectbox
+  supports typing to filter, which covers the "autocomplete" ask without a custom component.
+- **Subject dropdown is now frequency-ranked** (`_top_subjects()`, also cached 300s):
+  `GROUP BY subject, COUNT(*)` over the real `tickets` table, blended with the same static
+  baseline list from Follow-up 1 (baseline entries act as a cold-start placeholder with an
+  implicit count of 0, so the list is never empty before real history accumulates). Verified
+  this is genuinely self-learning, not just plumbing: subjects from earlier test tickets
+  submitted this session (e.g. "Dashboard performance issue", "Dashboard timeout") already
+  rank above the static baseline in a live `AppTest` run against the real Postgres backend.
+  Top-10 limit, "Other" always appended after (not counted against the limit).
+- **Known trade-off, not a bug**: both caches have a 5-minute TTL, so a subject submitted
+  just now can take up to 5 minutes to affect the ranking other users see — deliberate,
+  to avoid re-aggregating ~3,800 users / the whole tickets table on every Streamlit rerun
+  (which happens on every single widget interaction, not just page load).
+
+## Follow-up 3b: cache resolutions to cut LLM calls (done)
+
+Requested alongside Follow-up 3, and a real change to core agent logic, not just the
+frontend — confirmed scope with the user first (technical agent only; trust a cached
+resolution on the first repeat, no occurrence threshold) before implementing.
+
+- New `agents/technical_agent/resolution_cache.py`: `find_cached_resolution(db, subject)`
+  looks for the most recent already-processed ticket (`tickets.resolution IS NOT NULL`)
+  with the exact same `subject`, ordered by `resolved_at` desc. No new table — reuses
+  `tickets.subject`/`tickets.resolution`, which were already being persisted for every
+  ticket. Returns `None` on no match.
+- Wired into `agents/technical_agent/main.py`'s `/handle_ticket`, checked *before*
+  `TechnicalKnowledgeBase.retrieve()`/`generate_response()` — a hit skips both KB retrieval
+  and the LLM call, tagged `method="cache"` (alongside the existing `"rules"`/`"llm"`).
+  A hit replays whatever the prior ticket's outcome was, escalation included — deliberate:
+  if a subject consistently has no KB coverage, immediately escalating repeats is correct,
+  not a bug; re-attempting every time would defeat the point of caching.
+- Cache key is `subject` alone, not `subject + description` — the free-text description
+  would rarely repeat verbatim across tickets, while subjects are now mostly drawn from
+  the frequency-ranked dropdown (Follow-up 3), a small closed-ish set that actually repeats.
+- Tests: `tests/test_resolution_cache.py` (direct unit tests — no match, exact match, a
+  ticket with no resolution yet is correctly ignored, escalation outcomes replay too, most
+  recent wins when multiple prior tickets share a subject) and a new test in
+  `tests/test_technical_api.py` (`test_second_ticket_with_same_subject_uses_cache`,
+  through the real FastAPI endpoint).
+- Verified against the real Docker Compose backend, not just tests: submitted two tickets
+  with the same subject but *deliberately unrelated descriptions* (the second one's
+  description matched zero KB symptom keywords, which would have escalated with "I need to
+  research this issue further" if processed fresh) — the second ticket returned the exact
+  same resolution text as the first, and the logs confirmed `"Resolved ticket via rules"`
+  then `"Resolved ticket via cache"`, proving the cache path was taken rather than a
+  coincidence.
+- `CLAUDE.md`'s Technical agent section updated to describe the cache-first flow.

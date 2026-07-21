@@ -84,14 +84,22 @@ see Hybrid intelligence below for the shared pattern):
   Training-category tickets are currently routed to the technical agent (no dedicated training agent
   exists). It's also the one that creates the `tickets` row (via `get_or_create_ticket`) — it's normally
   first to see a ticket.
-- **Technical agent** (`agents/technical_agent/main.py`, port 8002): `TechnicalKnowledgeBase.retrieve()`
-  (`technical_kb.py`) scores every `kb_articles` row by symptom-keyword overlap and returns the top 3 —
-  the retrieval half of RAG. `rag.py`'s `generate_response()` asks the LLM to write an answer grounded only
-  in those articles; if the LLM is unavailable it falls back to serving the top article's body directly,
-  using *that article's own* `escalate` flag — the exact behavior the agent had before the LLM existed, so a
-  missing API key never turns an already-working autonomous resolution into a forced escalation. Escalations
-  are recorded in the `escalations` table and pushed to the `escalation_queue` in Redis (DB write happens
-  first and is the durable record — see Persistence).
+- **Technical agent** (`agents/technical_agent/main.py`, port 8002): before anything else,
+  `resolution_cache.py`'s `find_cached_resolution()` checks for a prior ticket with the exact same
+  `subject` that already has a recorded resolution (any status — a past escalation is replayed too, not
+  just a past resolution) — a hit skips KB retrieval *and* the LLM call entirely and reuses that ticket's
+  response verbatim (`method="cache"`). This is what makes the demo UI's frequency-ranked subject dropdown
+  (see `demo/streamlit_interface.py`) meaningfully reduce LLM calls over time: subjects are mostly drawn
+  from a small, ranked list rather than free text, so an exact match is a real signal of the same issue, not
+  a coincidental string collision — matching on the free-text description instead would rarely hit. Only on
+  a cache miss does `TechnicalKnowledgeBase.retrieve()` (`technical_kb.py`) score every `kb_articles` row by
+  symptom-keyword overlap and return the top 3 — the retrieval half of RAG. `rag.py`'s `generate_response()`
+  asks the LLM to write an answer grounded only in those articles; if the LLM is unavailable it falls back
+  to serving the top article's body directly, using *that article's own* `escalate` flag — the exact
+  behavior the agent had before the LLM existed, so a missing API key never turns an already-working
+  autonomous resolution into a forced escalation. Escalations are recorded in the `escalations` table and
+  pushed to the `escalation_queue` in Redis (DB write happens first and is the durable record — see
+  Persistence).
 - **Account agent** (`agents/account_agent/main.py`, port 8003): `intent.py`'s `extract_intent()` matches
   rule keywords ("add"/"remove"/"permission") and always regex-extracts any literal email in the text (no
   LLM needed for that — it's unambiguous either way); only text matching none of the rules falls through to

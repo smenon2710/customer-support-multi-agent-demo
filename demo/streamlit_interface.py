@@ -8,10 +8,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import concurrent.futures
 import uuid
 from datetime import datetime
-from typing import Optional
 
 import requests
 import streamlit as st
+from sqlalchemy import func
 
 # Streamlit Community Cloud exposes configured secrets via st.secrets, not the
 # process environment — bridge them into os.environ so shared/config.py's plain
@@ -28,7 +28,7 @@ except Exception:
 
 from shared.config import AGENT_ENDPOINTS
 from shared.db.metrics import compute_llm_availability, compute_ticket_metrics
-from shared.db.models import User
+from shared.db.models import Ticket, User
 from shared.db.session import SessionLocal
 from shared.escalation_review import approve_escalation, list_pending_escalations, reject_escalation
 from shared.models import SupportTicket
@@ -141,31 +141,56 @@ def display_cold_start_banner(status):
     )
 
 
-def _lookup_user_department(email: str) -> Optional[str]:
-    """Look up a real user's department from the seeded directory — mirrors how a
-    real internal tool would already know who's submitting, rather than asking a
-    known employee to self-report their own department."""
-    if not email:
-        return None
+@st.cache_data(ttl=300)
+def _user_directory() -> dict:
+    """email -> department for every active seeded user, cached briefly since
+    Streamlit reruns this whole script on every interaction and re-querying
+    ~3,800 rows that often would be wasteful. Backs the email selectbox below —
+    since the dropdown is built from this same directory, every option is by
+    construction a real, found user."""
     db = SessionLocal()
     try:
-        user = db.query(User).filter(User.email == email, User.status == "active").first()
-        return user.department.name if user else None
+        users = db.query(User).filter(User.status == "active").order_by(User.email).all()
+        return {u.email: u.department.name for u in users}
     finally:
         db.close()
 
 
-def _example_user_email() -> str:
-    """A real seeded email to use as the form's starting value, so the directory
-    lookup below succeeds by default instead of showing "not found" on first
-    load. Faker-generated per seed run (see scripts/seed_db.py), so this can't be
-    a hardcoded literal — it has to be looked up fresh."""
+@st.cache_data(ttl=300)
+def _top_subjects(limit: int = 10) -> list:
+    """Real historical subjects ranked by submission frequency, blended with a
+    static baseline so there's a sensible list before enough ticket history
+    exists to rank on its own merit. This is the "self-learning" piece: as more
+    tickets come in with a given subject, it climbs the ranking and eventually
+    displaces the static placeholders. Cached for the same rerun-frequency
+    reason as _user_directory — a newly-submitted subject can take up to the
+    cache TTL to affect the ranking, a deliberate trade-off against
+    re-aggregating the whole tickets table on every page interaction.
+    """
     db = SessionLocal()
     try:
-        user = db.query(User).filter(User.status == "active").order_by(User.id).first()
-        return user.email if user else ""
+        rows = (
+            db.query(Ticket.subject, func.count(Ticket.ticket_id))
+            .group_by(Ticket.subject)
+            .order_by(func.count(Ticket.ticket_id).desc())
+            .limit(limit)
+            .all()
+        )
+        counts = dict(rows)
     finally:
         db.close()
+
+    baseline = [
+        "Dashboard loading slowly or not updating",
+        "Cannot connect to data source",
+        "Chart or visualization showing incorrect data",
+        "Need access to a new workbook or dashboard",
+        "License or permission issue",
+        "How-to / training question",
+    ]
+    all_subjects = list(counts.keys()) + [s for s in baseline if s not in counts]
+    ranked = sorted(all_subjects, key=lambda s: counts.get(s, 0), reverse=True)
+    return ranked[:limit]
 
 
 def live_demo_interface():
@@ -177,33 +202,12 @@ def live_demo_interface():
     with col1:
         st.subheader("Submit Support Request")
 
-        user_email = st.text_input("User Email", _example_user_email())
+        directory = _user_directory()
+        user_email = st.selectbox("User Email", list(directory.keys()))
+        department = directory[user_email]
+        st.caption(f"Department: **{department}**")
 
-        looked_up_department = _lookup_user_department(user_email)
-        if looked_up_department:
-            st.caption(f"✓ Found in directory — Department: **{looked_up_department}**")
-            department = looked_up_department
-        else:
-            st.caption("Email not found in directory — please select your department:")
-            department = st.pills(
-                "Department",
-                ["Trading", "Risk Management", "Compliance", "Marketing", "Operations", "Finance", "Executive"],
-                default="Trading",
-                required=True,
-            )
-
-        subject_choice = st.selectbox(
-            "Subject",
-            [
-                "Dashboard loading slowly or not updating",
-                "Cannot connect to data source",
-                "Chart or visualization showing incorrect data",
-                "Need access to a new workbook or dashboard",
-                "License or permission issue",
-                "How-to / training question",
-                "Other",
-            ],
-        )
+        subject_choice = st.selectbox("Subject", _top_subjects() + ["Other"])
         if subject_choice == "Other":
             subject = st.text_input("Briefly describe your issue", "")
         else:

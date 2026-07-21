@@ -15,9 +15,11 @@ from shared.models import AgentMessage, SupportTicket
 
 try:
     from .rag import generate_response
+    from .resolution_cache import find_cached_resolution
     from .technical_kb import TechnicalKnowledgeBase
 except ImportError:
     from rag import generate_response
+    from resolution_cache import find_cached_resolution
     from technical_kb import TechnicalKnowledgeBase
 
 configure_logging()
@@ -59,11 +61,17 @@ async def handle_ticket(ticket_data: dict, db: Session = Depends(get_db)):
     set_ticket_id(ticket.ticket_id)
     get_or_create_ticket(db, ticket, assigned_agent="technical_agent")
 
-    # Retrieve candidate KB articles, then generate a grounded response (RAG).
-    ticket_text = f"{ticket.subject} {ticket.description}"
-    kb = TechnicalKnowledgeBase(db)
-    articles = kb.retrieve(ticket_text)
-    result, method = generate_response(ticket_text, articles, db=db)
+    # A prior ticket with this exact subject already resolved (or escalated) skips
+    # both KB retrieval and the LLM call entirely — see resolution_cache.py.
+    cached = find_cached_resolution(db, ticket.subject)
+    if cached is not None:
+        result, method = cached, "cache"
+    else:
+        # Retrieve candidate KB articles, then generate a grounded response (RAG).
+        ticket_text = f"{ticket.subject} {ticket.description}"
+        kb = TechnicalKnowledgeBase(db)
+        articles = kb.retrieve(ticket_text)
+        result, method = generate_response(ticket_text, articles, db=db)
 
     if result.escalate:
         reason = result.escalation_reason or "Escalated by technical agent"
