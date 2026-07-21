@@ -84,6 +84,11 @@ python -m scripts.seed_db
    tickets. Docker Compose picks up `.env` automatically; for local runs export
    the variables in your shell instead.
 
+   **(Optional) Enable internal-service auth.** Set `INTERNAL_API_TOKEN` (in the
+   same `.env`, or exported) to require a shared-secret header between the demo
+   app and the three agents. Unset by default — fine for local dev on your own
+   machine; set it if you're exposing agent ports beyond localhost.
+
 5. **Start All Agents** (run each from the project root, using `-m` so the
    `shared` package resolves correctly)
 Terminal 1: Router Agent
@@ -110,6 +115,11 @@ logic directly, plus FastAPI `TestClient` tests for each agent's HTTP endpoints 
 exercised against an isolated in-memory SQLite database created fresh per test
 (`tests/conftest.py`), and agents degrade gracefully when Redis is unreachable rather
 than failing to start.
+
+Lint: `pip install -r requirements-dev.txt && ruff check .` GitHub Actions
+(`.github/workflows/ci.yml`) runs lint, tests, and a `docker compose build` on every push
+and PR; an optional live LLM smoke test (`scripts/llm_smoke_test.py`) runs only when the
+`OPENROUTER_API_KEY` repo secret is configured.
 
 ## 🗄️ Database & Seeding
 
@@ -153,6 +163,19 @@ ticket escalated for manual handling outside the system). Every decision is reco
 `human_review` ticket event — who reviewed it, what they decided, and the final text — so
 there's a full audit trail from ticket submission through resolution.
 
+## 🔒 Hardening
+
+- **Service auth** — a shared-secret `X-Internal-Token` header, checked by a FastAPI
+  dependency (`shared/auth.py`) on every agent's business endpoint (`/health` stays open
+  for infra healthchecks). Opt-in via `INTERNAL_API_TOKEN`; unset means auth is disabled,
+  so local dev and the test suite don't need to know about it.
+- **Structured logging** — every log line is a JSON object (`shared/logging_config.py`),
+  and every log emitted while handling a ticket carries that ticket's ID, so you can grep
+  one ticket's full story across the router, technical/account agent, and orchestrator logs.
+- **LLM availability tracking** — every `complete_json()` attempt (success or failure, and
+  why) is logged to the database and surfaced on the System Architecture tab, so you can
+  see exactly how often the LLM layer is actually available versus falling back to rules.
+
 ## 📊 Demo Scenarios
 
 - **🚨 Critical**: Trading dashboard outages (2-second resolution)
@@ -166,8 +189,10 @@ there's a full audit trail from ticket submission through resolution.
 - **Persistence**: PostgreSQL (SQLite for local dev), SQLAlchemy ORM
 - **Intelligence**: Rule-based classification + OpenRouter LLM fallback (RAG for technical support)
 - **Communication**: HTTP REST APIs, Redis message queuing
+- **Security & Observability**: Shared-secret internal auth, structured JSON logging, LLM availability tracking
 - **Frontend**: Streamlit interactive interface
 - **Deployment**: Docker containers, scalable architecture
+- **CI**: GitHub Actions (lint, tests, Docker build)
 
 ## 📈 Business Impact
 
@@ -188,9 +213,11 @@ and real failure handling (Phase 0); persistence — tickets, departments/users/
 the technical knowledge base now live in a database instead of Python literals, with a real
 (simulated) Tableau backend and a dashboard that reports actual numbers (Phase 1); hybrid
 intelligence — rules stay the fast/free default, an OpenRouter LLM handles ambiguous
-classification and RAG-based technical responses when configured (Phase 2); and a closed
+classification and RAG-based technical responses when configured (Phase 2); a closed
 escalation loop — a Human Review tab with Approve/Edit/Reject actions and a full audit trail,
-so nothing an agent escalates is ever fire-and-forget (Phase 3). Still ahead: cloud deployment.
+so nothing an agent escalates is ever fire-and-forget (Phase 3); and hardening — internal
+service auth, structured JSON logging with ticket correlation, typed LLM error handling with
+availability tracking, and CI (Phase 4). Still ahead: cloud deployment.
 
 ---
 *Built as a portfolio demonstration of multi-agent AI coordination and enterprise software architecture.*

@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agents.router_agent.main import app
+from shared import config
 from shared.db.models import Ticket, TicketEvent
 from shared.db.session import get_db
 
@@ -52,3 +53,17 @@ def test_route_ticket_classifies_and_routes(client, db_session):
     events = db_session.query(TicketEvent).filter(TicketEvent.ticket_id == "T001").all()
     assert len(events) == 1
     assert events[0].action == "classification"
+
+
+def test_route_ticket_requires_token_when_configured(client, monkeypatch):
+    monkeypatch.setattr(config, "INTERNAL_API_TOKEN", "secret123")
+    response = client.post("/route_ticket", json=_ticket())
+    assert response.status_code == 401
+
+
+def test_route_ticket_accepts_correct_token(client, monkeypatch):
+    monkeypatch.setattr(config, "INTERNAL_API_TOKEN", "secret123")
+    response = client.post(
+        "/route_ticket", json=_ticket(), headers={"X-Internal-Token": "secret123"}
+    )
+    assert response.status_code == 200

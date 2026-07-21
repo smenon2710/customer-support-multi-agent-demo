@@ -5,8 +5,10 @@ import uvicorn
 from fastapi import Depends, FastAPI
 from sqlalchemy.orm import Session
 
+from shared.auth import verify_internal_token
 from shared.db.repository import get_or_create_ticket, record_escalation, record_event, record_resolution
 from shared.db.session import get_db, init_db, is_db_healthy
+from shared.logging_config import configure_logging, set_ticket_id
 from shared.message_queue import MessageQueue, MessageQueueError
 from shared.models import AgentMessage, SupportTicket
 
@@ -17,6 +19,7 @@ except ImportError:
     from rag import generate_response
     from technical_kb import TechnicalKnowledgeBase
 
+configure_logging()
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Technical Support Agent")
@@ -49,21 +52,25 @@ def _notify_escalation(ticket: SupportTicket, reason: str) -> None:
         logger.error("Failed to queue escalation for ticket %s: %s", ticket.ticket_id, e)
 
 
-@app.post("/handle_ticket")
+@app.post("/handle_ticket", dependencies=[Depends(verify_internal_token)])
 async def handle_ticket(ticket_data: dict, db: Session = Depends(get_db)):
     ticket = SupportTicket(**ticket_data["ticket"])
+    set_ticket_id(ticket.ticket_id)
     get_or_create_ticket(db, ticket, assigned_agent="technical_agent")
 
     # Retrieve candidate KB articles, then generate a grounded response (RAG).
     ticket_text = f"{ticket.subject} {ticket.description}"
     kb = TechnicalKnowledgeBase(db)
     articles = kb.retrieve(ticket_text)
-    result, method = generate_response(ticket_text, articles)
+    result, method = generate_response(ticket_text, articles, db=db)
 
     if result.escalate:
         reason = result.escalation_reason or "Escalated by technical agent"
         record_escalation(db, ticket.ticket_id, "technical_agent", reason, "escalation_queue")
         _notify_escalation(ticket, reason)
+        logger.info("Escalated ticket via %s: %s", method, reason)
+    else:
+        logger.info("Resolved ticket via %s", method)
 
     record_event(db, ticket.ticket_id, "technical_agent", "response", {
         "content": result.response,

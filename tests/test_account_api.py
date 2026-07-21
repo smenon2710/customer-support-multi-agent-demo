@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agents.account_agent.main import app
+from shared import config
 from shared.db.models import TicketEvent
 from shared.db.session import get_db
 
@@ -70,3 +71,22 @@ def test_handle_ticket_records_method_and_intent(client, seeded_db):
     assert event is not None
     assert event.payload["method"] == "rules"
     assert event.payload["intent"] == "add_users"
+
+
+def test_handle_ticket_requires_token_when_configured(client, monkeypatch):
+    monkeypatch.setattr(config, "INTERNAL_API_TOKEN", "secret123")
+    response = client.post(
+        "/handle_ticket",
+        json=_ticket_payload("Add user", "Please add 2 new users to Trading."),
+    )
+    assert response.status_code == 401
+
+
+def test_handle_ticket_accepts_correct_token(client, monkeypatch):
+    monkeypatch.setattr(config, "INTERNAL_API_TOKEN", "secret123")
+    response = client.post(
+        "/handle_ticket",
+        json=_ticket_payload("Add user", "Please add 2 new users to Trading."),
+        headers={"X-Internal-Token": "secret123"},
+    )
+    assert response.status_code == 200

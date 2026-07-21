@@ -5,8 +5,10 @@ import uvicorn
 from fastapi import Depends, FastAPI
 from sqlalchemy.orm import Session
 
+from shared.auth import verify_internal_token
 from shared.db.repository import get_or_create_ticket, record_event
 from shared.db.session import get_db, init_db, is_db_healthy
+from shared.logging_config import configure_logging, set_ticket_id
 from shared.message_queue import MessageQueue, MessageQueueError
 from shared.models import AgentMessage, SupportTicket, TicketCategory
 
@@ -15,6 +17,7 @@ try:
 except ImportError:
     from router_logic import RouterLogic
 
+configure_logging()
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Router Agent")
@@ -34,11 +37,13 @@ async def health():
     }
 
 
-@app.post("/route_ticket")
+@app.post("/route_ticket", dependencies=[Depends(verify_internal_token)])
 async def route_ticket(ticket: SupportTicket, db: Session = Depends(get_db)):
+    set_ticket_id(ticket.ticket_id)
+
     # Classify the ticket — rules first, falling through to the LLM only when the
     # rule signal is weak (see RouterLogic.classify).
-    decision = router_logic.classify(ticket)
+    decision = router_logic.classify(ticket, db=db)
     category, priority = decision.category, decision.priority
     ticket.category = category
     ticket.priority = priority
@@ -62,6 +67,7 @@ async def route_ticket(ticket: SupportTicket, db: Session = Depends(get_db)):
         "confidence": decision.confidence,
     })
     db.commit()
+    logger.info("Routed ticket to %s via %s (priority=%s)", target_agent, decision.method, priority.value)
 
     # Record the routing decision. Nothing currently consumes this queue — the
     # actual handoff is the orchestrator's direct HTTP call to /handle_ticket —

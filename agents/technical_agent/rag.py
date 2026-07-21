@@ -1,6 +1,7 @@
 from typing import List, Optional, Tuple
 
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from shared.config import GENERATION_MODEL
 from shared.db.models import KBArticle
@@ -26,8 +27,14 @@ class AgentResponse(BaseModel):
     kb_articles_used: List[str] = []
 
 
-def generate_response(ticket_text: str, articles: List[KBArticle]) -> Tuple[AgentResponse, str]:
-    """Returns (response, method) where method is "llm" or "rules"."""
+def generate_response(
+    ticket_text: str, articles: List[KBArticle], db: Optional[Session] = None
+) -> Tuple[AgentResponse, str]:
+    """Returns (response, method) where method is "llm" or "rules".
+
+    `db`, if given, is passed through to `complete_json` for LLM-availability
+    logging (see shared/llm_client.py) — optional, purely for observability.
+    """
     if not articles:
         return (
             AgentResponse(
@@ -46,6 +53,7 @@ def generate_response(ticket_text: str, articles: List[KBArticle]) -> Tuple[Agen
         TECH_AGENT_SYSTEM_PROMPT,
         f"<knowledge_base>\n{kb_context}\n</knowledge_base>\n\n<ticket>\n{ticket_text}\n</ticket>",
         AgentResponse,
+        db=db,
     )
     if result is not None:
         return result, "llm"

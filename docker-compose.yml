@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   redis:
     image: redis:7-alpine
@@ -54,6 +52,7 @@ services:
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       - CLASSIFIER_MODEL=${CLASSIFIER_MODEL:-meta-llama/llama-3.3-70b-instruct:free}
       - GENERATION_MODEL=${GENERATION_MODEL:-meta-llama/llama-3.3-70b-instruct:free}
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:-}
 
   technical-agent:
     build:
@@ -72,6 +71,7 @@ services:
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       - CLASSIFIER_MODEL=${CLASSIFIER_MODEL:-meta-llama/llama-3.3-70b-instruct:free}
       - GENERATION_MODEL=${GENERATION_MODEL:-meta-llama/llama-3.3-70b-instruct:free}
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:-}
 
   account-agent:
     build:
@@ -90,6 +90,7 @@ services:
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       - CLASSIFIER_MODEL=${CLASSIFIER_MODEL:-meta-llama/llama-3.3-70b-instruct:free}
       - GENERATION_MODEL=${GENERATION_MODEL:-meta-llama/llama-3.3-70b-instruct:free}
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:-}
 
   demo-app:
     build:
@@ -106,6 +107,7 @@ services:
       - TECHNICAL_URL=http://technical-agent:8002
       - ACCOUNT_URL=http://account-agent:8003
       - DATABASE_URL=postgresql://tableau_support:tableau_support_dev@postgres:5432/tableau_support
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:-}
 
 volumes:
   postgres-data:

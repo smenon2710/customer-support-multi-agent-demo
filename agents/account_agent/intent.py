@@ -1,7 +1,8 @@
 import re
-from typing import List, Literal, Tuple
+from typing import List, Literal, Optional, Tuple
 
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from shared.config import CLASSIFIER_MODEL
 from shared.llm_client import complete_json
@@ -29,12 +30,15 @@ class AccountIntent(BaseModel):
     reasoning: str = ""
 
 
-def extract_intent(ticket_text: str) -> Tuple[AccountIntent, str]:
+def extract_intent(ticket_text: str, db: Optional[Session] = None) -> Tuple[AccountIntent, str]:
     """Rules first; falls through to the LLM only when no rule keyword matched.
 
     Email addresses are always extracted by regex, never left to the LLM — a literal
     email in the text is unambiguous either way, so there's nothing for the model to
     add there. Returns (intent, method) where method is "llm" or "rules".
+
+    `db`, if given, is passed through to `complete_json` for LLM-availability
+    logging (see shared/llm_client.py) — optional, purely for observability.
     """
     text = ticket_text.lower()
     emails = EMAIL_PATTERN.findall(ticket_text)
@@ -59,7 +63,7 @@ def extract_intent(ticket_text: str) -> Tuple[AccountIntent, str]:
             "rules",
         )
 
-    llm_result = complete_json(CLASSIFIER_MODEL, ACCOUNT_INTENT_SYSTEM_PROMPT, ticket_text, AccountIntent)
+    llm_result = complete_json(CLASSIFIER_MODEL, ACCOUNT_INTENT_SYSTEM_PROMPT, ticket_text, AccountIntent, db=db)
     if llm_result is not None:
         if not llm_result.target_emails:
             llm_result.target_emails = emails

@@ -294,21 +294,32 @@ Deliverable: no message is ever fire-and-forget; every escalation is visible and
 
 ---
 
-## Phase 4 — Hardening
+## Phase 4 — Hardening ✅ Done
 
-1. **Service auth.** Shared-secret header (`X-Internal-Token`) checked by a FastAPI
-   dependency on every agent endpoint; the public surface is only the Streamlit app (or a
-   future public API gateway).
-2. **Structured logging.** JSON logs with `ticket_id` correlation across all three agents
-   and the orchestrator.
-3. **Error handling for the LLM API.** Catch the OpenAI SDK's typed exceptions in a chain —
-   `RateLimitError` (expected routinely on free tier: no retry, straight to rules-only),
-   `APIStatusError`/`APIConnectionError` (log, fall back). Centralize this inside
-   `shared/llm_client.py` so agents only ever see "result or None". The system must
-   degrade to rules + "a specialist will follow up" rather than 500ing. Log every
-   fallback with a reason code so the metrics dashboard can show LLM availability.
-4. **CI.** GitHub Actions: lint (ruff), pytest, docker build. LLM calls mocked in unit
-   tests; one optional live smoke test gated on a secret.
+1. **Service auth.** `shared/auth.py`'s `verify_internal_token` FastAPI dependency checks a
+   shared-secret `X-Internal-Token` header, wired onto every agent's business endpoint
+   (`/route_ticket`, `/handle_ticket`) — **not** `/health`, which stays open for infra
+   healthchecks. Opt-in via `INTERNAL_API_TOKEN`: unset (the default) disables auth
+   entirely, so local dev and the test suite don't need to know about it.
+   `shared/orchestrator.py` attaches the header on every agent call when configured.
+2. **Structured logging.** `shared/logging_config.py`'s `configure_logging()` (JSON stdout
+   handler) plus `set_ticket_id()` (a `contextvars.ContextVar`, correctly isolated per
+   request under FastAPI's per-request asyncio Tasks) — every log line during a ticket's
+   handling carries its `ticket_id`, across all three agents and the orchestrator.
+3. **Error handling for the LLM API.** `shared/llm_client.py`'s `complete_json` now has a
+   typed exception chain (`RateLimitError` → `APIConnectionError` → `APIStatusError` → a
+   final broad `Exception` catch-all), each logging a distinct reason code. Went further
+   than "log every fallback" — attempts (success or failure, with reason) are recorded to
+   a new `llm_call_log` table via an optional `db` param threaded through `complete_json`
+   and the three hybrid methods (`RouterLogic.classify`, `rag.generate_response`,
+   `intent.extract_intent`), aggregated by `shared/db/metrics.py`'s
+   `compute_llm_availability()` and shown on the Streamlit dashboard's "LLM Availability"
+   panel — a real, queryable answer to "how often is the LLM actually available," not just
+   log lines to grep.
+4. **CI.** `.github/workflows/ci.yml`: `ruff check .` (lint), `pytest` (test — already
+   never makes real network calls, satisfying "LLM calls mocked" by construction, not by
+   explicit mocking), `docker compose build`, and `scripts/llm_smoke_test.py` as an
+   optional live smoke test gated on the `OPENROUTER_API_KEY` repo secret.
 
 ---
 

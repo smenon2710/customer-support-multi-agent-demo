@@ -99,3 +99,18 @@ class Escalation(Base):
     created_at = Column(DateTime, nullable=False, default=utcnow)
 
     ticket = relationship("Ticket")
+
+
+class LLMCallLog(Base):
+    """One row per shared.llm_client.complete_json() attempt — backs the dashboard's
+    LLM availability metric. Not tied to a ticket: some attempts may not resolve to
+    one (e.g. a call made outside a ticket-handling request), and a ticket can trigger
+    zero, one, or several attempts (retries).
+    """
+    __tablename__ = "llm_call_log"
+
+    id = Column(Integer, primary_key=True)
+    model = Column(String(100), nullable=False)
+    success = Column(Boolean, nullable=False)
+    reason = Column(String(50), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=utcnow)

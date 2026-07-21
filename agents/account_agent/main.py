@@ -5,8 +5,10 @@ import uvicorn
 from fastapi import Depends, FastAPI
 from sqlalchemy.orm import Session
 
+from shared.auth import verify_internal_token
 from shared.db.repository import get_or_create_ticket, record_escalation, record_event, record_resolution
 from shared.db.session import get_db, init_db, is_db_healthy
+from shared.logging_config import configure_logging, set_ticket_id
 from shared.message_queue import MessageQueue, MessageQueueError
 from shared.models import AgentMessage, SupportTicket
 from shared.tableau_service import SimulatedTableauBackend
@@ -18,6 +20,7 @@ except ImportError:
     from account_manager import AccountManager
     from intent import extract_intent
 
+configure_logging()
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Account Management Agent")
@@ -36,14 +39,15 @@ async def health():
     }
 
 
-@app.post("/handle_ticket")
+@app.post("/handle_ticket", dependencies=[Depends(verify_internal_token)])
 async def handle_ticket(ticket_data: dict, db: Session = Depends(get_db)):
     ticket = SupportTicket(**ticket_data["ticket"])
+    set_ticket_id(ticket.ticket_id)
     get_or_create_ticket(db, ticket, assigned_agent="account_agent")
 
     # Extract intent — rules first, LLM only for genuinely ambiguous text (see intent.py).
     ticket_text = f"{ticket.subject} {ticket.description}"
-    intent, method = extract_intent(ticket_text)
+    intent, method = extract_intent(ticket_text, db=db)
 
     # Execution is always deterministic — the model never decides whether licenses
     # exist, it only helped parse what the user asked for.
@@ -69,6 +73,9 @@ async def handle_ticket(ticket_data: dict, db: Session = Depends(get_db)):
             mq.send_message("manager_approval_queue", escalation_msg)
         except MessageQueueError as e:
             logger.error("Failed to queue manager approval for ticket %s: %s", ticket.ticket_id, e)
+        logger.info("Escalated ticket via %s (intent=%s)", method, intent.action)
+    else:
+        logger.info("Resolved ticket via %s (intent=%s)", method, intent.action)
 
     record_event(db, ticket.ticket_id, "account_agent", "response", {
         "content": response_content,

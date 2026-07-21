@@ -4,7 +4,7 @@ from typing import Dict, Optional
 
 from sqlalchemy.orm import Session
 
-from shared.db.models import Ticket
+from shared.db.models import LLMCallLog, Ticket
 
 
 @dataclass
@@ -50,4 +50,33 @@ def compute_ticket_metrics(db: Session) -> TicketMetrics:
         median_handling_seconds=statistics.median(handling_times) if handling_times else None,
         tickets_by_department=by_department,
         tickets_by_priority=by_priority,
+    )
+
+
+@dataclass
+class LLMAvailability:
+    total_calls: int
+    successful: int
+    availability_rate: float
+    failures_by_reason: Dict[str, int] = field(default_factory=dict)
+
+
+def compute_llm_availability(db: Session) -> LLMAvailability:
+    """Aggregates shared.llm_client.complete_json()'s LLMCallLog rows — how often
+    LLM calls actually succeeded, and why they didn't when they failed.
+    """
+    logs = db.query(LLMCallLog).all()
+    total = len(logs)
+    successful = sum(1 for log in logs if log.success)
+
+    failures_by_reason: Dict[str, int] = {}
+    for log in logs:
+        if not log.success:
+            failures_by_reason[log.reason] = failures_by_reason.get(log.reason, 0) + 1
+
+    return LLMAvailability(
+        total_calls=total,
+        successful=successful,
+        availability_rate=(successful / total) if total else 0.0,
+        failures_by_reason=failures_by_reason,
     )

@@ -1,7 +1,8 @@
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from shared.config import CLASSIFIER_MODEL
 from shared.llm_client import complete_json
@@ -76,12 +77,15 @@ class RouterLogic:
 
         return category, priority, confidence
 
-    def classify(self, ticket: SupportTicket) -> RoutingDecision:
+    def classify(self, ticket: SupportTicket, db: Optional[Session] = None) -> RoutingDecision:
         """Rules first; falls through to the LLM only when the rule signal is weak.
 
         Business-rule priority overrides (critical department, critical keywords) are
         policy, not inference — they apply to an LLM-suggested priority exactly as they
         do to the rules' own default, via the shared `_apply_priority_policy`.
+
+        `db`, if given, is passed through to `complete_json` for LLM-availability
+        logging (see shared/llm_client.py) — optional, purely for observability.
         """
         category, priority, confidence = self.classify_ticket(ticket)
 
@@ -91,6 +95,7 @@ class RouterLogic:
                 CLASSIFIER_SYSTEM_PROMPT,
                 f"Department: {ticket.department}\nSubject: {ticket.subject}\nDescription: {ticket.description}",
                 LLMClassification,
+                db=db,
             )
             if llm_result is not None:
                 category = TicketCategory(llm_result.category)

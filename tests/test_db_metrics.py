@@ -1,7 +1,7 @@
 from datetime import timedelta
 
-from shared.db.metrics import compute_ticket_metrics
-from shared.db.models import Ticket, utcnow
+from shared.db.metrics import compute_llm_availability, compute_ticket_metrics
+from shared.db.models import LLMCallLog, Ticket, utcnow
 
 
 def _ticket(ticket_id, department, priority, status, escalated, resolved_after_seconds=None):
@@ -52,3 +52,28 @@ def test_compute_ticket_metrics_aggregates_correctly(db_session):
     assert metrics.median_handling_seconds == 20.0
     assert metrics.tickets_by_department == {"Trading": 2, "Finance": 1}
     assert metrics.tickets_by_priority == {"critical": 1, "high": 1, "medium": 1}
+
+
+def test_compute_llm_availability_on_empty_db(db_session):
+    availability = compute_llm_availability(db_session)
+    assert availability.total_calls == 0
+    assert availability.availability_rate == 0.0
+    assert availability.failures_by_reason == {}
+
+
+def test_compute_llm_availability_aggregates_correctly(db_session):
+    db_session.add_all([
+        LLMCallLog(model="m1", success=True, reason="success"),
+        LLMCallLog(model="m1", success=True, reason="success"),
+        LLMCallLog(model="m1", success=False, reason="rate_limited"),
+        LLMCallLog(model="m1", success=False, reason="rate_limited"),
+        LLMCallLog(model="m1", success=False, reason="no_api_key"),
+    ])
+    db_session.commit()
+
+    availability = compute_llm_availability(db_session)
+
+    assert availability.total_calls == 5
+    assert availability.successful == 2
+    assert availability.availability_rate == 2 / 5
+    assert availability.failures_by_reason == {"rate_limited": 2, "no_api_key": 1}

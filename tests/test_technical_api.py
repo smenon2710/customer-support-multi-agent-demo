@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agents.technical_agent.main import app
+from shared import config
 from shared.db.models import TicketEvent
 from shared.db.session import get_db
 
@@ -71,3 +72,22 @@ def test_handle_ticket_records_method_and_articles_used(client, seeded_db):
     # exercises the rules fallback.
     assert event.payload["method"] == "rules"
     assert "Dashboard Loading Issues" in event.payload["kb_articles_used"]
+
+
+def test_handle_ticket_requires_token_when_configured(client, monkeypatch):
+    monkeypatch.setattr(config, "INTERNAL_API_TOKEN", "secret123")
+    response = client.post(
+        "/handle_ticket",
+        json=_ticket_payload("Dashboard slow", "The dashboard is slow and keeps loading."),
+    )
+    assert response.status_code == 401
+
+
+def test_handle_ticket_accepts_correct_token(client, monkeypatch):
+    monkeypatch.setattr(config, "INTERNAL_API_TOKEN", "secret123")
+    response = client.post(
+        "/handle_ticket",
+        json=_ticket_payload("Dashboard slow", "The dashboard is slow and keeps loading."),
+        headers={"X-Internal-Token": "secret123"},
+    )
+    assert response.status_code == 200

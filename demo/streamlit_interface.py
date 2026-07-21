@@ -12,7 +12,7 @@ import requests
 import streamlit as st
 
 from shared.config import AGENT_ENDPOINTS
-from shared.db.metrics import compute_ticket_metrics
+from shared.db.metrics import compute_llm_availability, compute_ticket_metrics
 from shared.db.session import SessionLocal
 from shared.escalation_review import approve_escalation, list_pending_escalations, reject_escalation
 from shared.models import SupportTicket
@@ -362,6 +362,7 @@ def system_architecture():
         try:
             metrics = compute_ticket_metrics(db)
             site_status = SimulatedTableauBackend(db).get_site_status()
+            llm_stats = compute_llm_availability(db)
         finally:
             db.close()
 
@@ -377,6 +378,18 @@ def system_architecture():
             median = metrics.median_handling_seconds
             st.metric("Median Handling Time", f"{median:.1f} sec" if median is not None else "—")
             st.metric("Departments", site_status.total_departments)
+
+        st.markdown("**🧠 LLM Availability**")
+        if llm_stats.total_calls:
+            st.write(
+                f"{llm_stats.successful}/{llm_stats.total_calls} calls succeeded "
+                f"({llm_stats.availability_rate:.0%})"
+            )
+            if llm_stats.failures_by_reason:
+                reasons = ", ".join(f"{reason}: {count}" for reason, count in llm_stats.failures_by_reason.items())
+                st.caption(f"Failure reasons — {reasons}")
+        else:
+            st.caption("No LLM calls yet — rules haven't needed a fallback, or OPENROUTER_API_KEY isn't set.")
 
     st.subheader("🔄 Communication Flow")
     st.markdown("""

@@ -8,7 +8,8 @@ A portfolio project simulating a multi-agent customer support system for Tableau
 fintech company. Three FastAPI microservices (router, technical, account) coordinate over HTTP, backed by
 Redis (messaging), Postgres/SQLite (persistence), and an optional OpenRouter LLM for the cases deterministic
 rules can't confidently handle, fronted by a Streamlit demo UI with a human-in-the-loop review queue for
-anything an agent escalates.
+anything an agent escalates. Internal endpoints are optionally shared-secret-protected, every log line is
+JSON with ticket-ID correlation, and GitHub Actions runs lint/tests/docker-build on every push.
 
 ## Running the system
 
@@ -38,17 +39,24 @@ agent's own directory (not the repo root) at the front of `sys.path`, so the `fr
 imports fail. All agent endpoints, Redis, and the database are configured via env vars in
 `shared/config.py` (`ROUTER_URL`, `TECHNICAL_URL`, `ACCOUNT_URL`, `REDIS_URL`, `DATABASE_URL`),
 defaulting to `localhost`/SQLite for local runs; Docker Compose overrides them to the compose
-service hostnames and Postgres.
+service hostnames and Postgres. `INTERNAL_API_TOKEN` (optional, unset by default) gates the
+business endpoints — see Hardening below.
 
 Tests: `pytest` (config in `pytest.ini`, root `conftest.py` puts the repo root on `sys.path` for
 imports). Covers `RouterLogic`/`TechnicalKnowledgeBase`/`AccountManager`/`SimulatedTableauBackend`/
-`shared/db/repository.py`/`shared/db/metrics.py`/`shared/llm_client.py` directly plus FastAPI
-`TestClient` tests per agent, including `/health`. No Redis, Postgres, Docker, or
-`OPENROUTER_API_KEY` required: `tests/conftest.py` provides `db_session` (fresh in-memory SQLite +
-schema) and `seeded_db` (same, with fixture departments/users/KB articles) fixtures, API tests
-override the `get_db` FastAPI dependency with them (see Persistence below), and with no API key
-configured every LLM-touching test exercises the real rules-only fallback path end to end rather
-than needing a mock — see Hybrid intelligence below. No lint config or CI yet.
+`shared/db/repository.py`/`shared/db/metrics.py`/`shared/llm_client.py`/`shared/auth.py`/
+`shared/logging_config.py` directly plus FastAPI `TestClient` tests per agent, including `/health`
+and auth enforcement. No Redis, Postgres, Docker, or `OPENROUTER_API_KEY` required:
+`tests/conftest.py` provides `db_session` (fresh in-memory SQLite + schema) and `seeded_db` (same,
+with fixture departments/users/KB articles) fixtures, API tests override the `get_db` FastAPI
+dependency with them (see Persistence below), and with no API key configured every LLM-touching
+test exercises the real rules-only fallback path end to end rather than needing a mock — see
+Hybrid intelligence below.
+
+Lint: `ruff check .` (config in `pyproject.toml`, default rule set — `pip install -r
+requirements-dev.txt` first). CI (`.github/workflows/ci.yml`): lint, `pytest`, `docker compose
+build`, and an optional live LLM smoke test (`scripts/llm_smoke_test.py`) gated on the
+`OPENROUTER_API_KEY` repo secret being set.
 
 ## Architecture
 
@@ -146,9 +154,11 @@ Idempotent — skips if `departments` is already populated. Run via `python -m s
 `-m` form for the same `sys.path` reason as the agents) or the Docker Compose `db-seed` service.
 
 **Hybrid intelligence** (`shared/llm_client.py`): a single `complete_json(model, system, user, schema,
-retries=1, client=None)` wraps every LLM call, via the OpenAI SDK pointed at OpenRouter
-(`https://openrouter.ai/api/v1`). It **never raises** — no `OPENROUTER_API_KEY` configured, a rate limit, a
-network/server error, or output that never validates against `schema` after one retry all return `None`.
+retries=1, client=None, db=None)` wraps every LLM call, via the OpenAI SDK pointed at OpenRouter
+(`https://openrouter.ai/api/v1`). It **never raises** — no `OPENROUTER_API_KEY` configured, a rate limit
+(`RateLimitError`), a network error (`APIConnectionError`), any other API error (`APIStatusError`), or output
+that never validates against `schema` after one retry all return `None` (each caught with a distinct typed
+`except` so the failure reason is known, plus a final broad `except Exception` for anything unforeseen).
 Every call site (router, technical, account) treats `None` identically: fall back to the deterministic rule
 path. This is why the whole system runs correctly with no API key at all — every hybrid method
 (`RouterLogic.classify`, `rag.generate_response`, `intent.extract_intent`) is unconditionally safe to call
@@ -158,6 +168,15 @@ duck-typing `.chat.completions.create(...)`) — production call sites never pas
 constructed module-level client. Models are configured via `shared/config.py`'s `CLASSIFIER_MODEL`
 (router + account intent) and `GENERATION_MODEL` (technical RAG), both defaulting to a free OpenRouter
 model — see `docs/UPGRADE_PLAN.md` Phase 2 for the free-tier rate-limit constraints this is designed around.
+
+**LLM availability tracking:** `complete_json`'s optional `db` param, when given, gets a best-effort
+`LLMCallLog` row per attempt (`model`, `success`, `reason` — `"success"`, `"no_api_key"`, `"rate_limited"`,
+`"connection_error"`, `"api_error"`, `"invalid_response"`, or `"unknown_error"`). It only calls `db.add()`,
+never `db.commit()`, so it piggybacks on whatever transaction the caller eventually commits rather than
+prematurely flushing a request's in-progress work. All three agents pass `db=db` through their hybrid call
+(`classify`/`generate_response`/`extract_intent` all accept and forward an optional `db` param for exactly
+this). `shared/db/metrics.py`'s `compute_llm_availability()` aggregates these rows for the Streamlit
+dashboard's "LLM Availability" panel — success rate and a failure-reason breakdown.
 
 **Deviations from the plan doc, both deliberate:** (1) KB retrieval (`TechnicalKnowledgeBase.retrieve`) uses
 Python-side scored keyword matching, not Postgres `tsvector` full-text search as the plan sketched — the
@@ -191,6 +210,26 @@ between reading and writing). (2) the plan's `open → in_progress → resolved 
 status lifecycle was simplified to the existing 3-state `tickets.status` field (`open`/`resolved`/
 `escalated`) plus the `human_review` audit event — there's no downstream workflow (customer notification,
 reopen flow, etc.) that would consume `in_progress`/`closed` states, so adding them would be speculative.
+
+**Hardening — auth** (`shared/auth.py`): `verify_internal_token` is a FastAPI dependency checking the
+`X-Internal-Token` header against `config.INTERNAL_API_TOKEN`, wired via `dependencies=[Depends(...)]` on
+every agent's business endpoint (`/route_ticket`, `/handle_ticket`) — deliberately **not** on `/health`,
+which needs to stay reachable for infra healthchecks without a token. It's a no-op when
+`INTERNAL_API_TOKEN` is unset (the default), so local dev and the test suite never need to think about it
+unless a test explicitly monkeypatches it on. It reads `config.INTERNAL_API_TOKEN` via `from shared import
+config; config.INTERNAL_API_TOKEN` (module attribute access at call time), not a top-level `from
+shared.config import INTERNAL_API_TOKEN` — the latter would bind the value at `auth.py`'s import time and
+never see a test's `monkeypatch.setattr(config, "INTERNAL_API_TOKEN", ...)`. `shared/orchestrator.py`
+attaches the same header on every request it makes to an agent when the token is configured.
+
+**Hardening — structured logging** (`shared/logging_config.py`): `configure_logging()` replaces the root
+logger's handlers with a single JSON-formatting stdout handler (idempotent — safe to call from every agent's
+`main.py` and from `orchestrator.py`, even in the same process, since it replaces rather than appends).
+`set_ticket_id(ticket_id)` binds a `contextvars.ContextVar` that `JSONFormatter` reads into every log
+record's `ticket_id` field for the rest of that request — safe under FastAPI because each request runs in
+its own asyncio Task and contextvars are isolated per Task, so concurrent requests never bleed into each
+other's logs. Each agent calls `set_ticket_id` at the top of its business endpoint, right after parsing the
+ticket; `orchestrator.py` calls it at the top of `process_support_ticket`.
 
 **Unused/dead code:** `data/mock_tickets.json` and `data/company_data.json` are still not read by any Python
 code. `data/kb_articles.json` is now used — by `scripts/seed_db.py` only, not read at agent runtime (the
