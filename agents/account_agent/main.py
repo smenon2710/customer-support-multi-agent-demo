@@ -13,8 +13,10 @@ from shared.tableau_service import SimulatedTableauBackend
 
 try:
     from .account_manager import AccountManager
+    from .intent import extract_intent
 except ImportError:
     from account_manager import AccountManager
+    from intent import extract_intent
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +41,15 @@ async def handle_ticket(ticket_data: dict, db: Session = Depends(get_db)):
     ticket = SupportTicket(**ticket_data["ticket"])
     get_or_create_ticket(db, ticket, assigned_agent="account_agent")
 
-    # Process the account request
+    # Extract intent — rules first, LLM only for genuinely ambiguous text (see intent.py).
+    ticket_text = f"{ticket.subject} {ticket.description}"
+    intent, method = extract_intent(ticket_text)
+
+    # Execution is always deterministic — the model never decides whether licenses
+    # exist, it only helped parse what the user asked for.
     backend = SimulatedTableauBackend(db)
     account_manager = AccountManager(backend)
-    ticket_text = f"{ticket.subject} {ticket.description}"
-    response_content = account_manager.process_access_request(ticket_text, ticket.department)
+    response_content = account_manager.build_response(intent, ticket.department)
 
     # Check if escalation is needed
     needs_escalation = "Manager Approval Required" in response_content
@@ -64,6 +70,15 @@ async def handle_ticket(ticket_data: dict, db: Session = Depends(get_db)):
         except MessageQueueError as e:
             logger.error("Failed to queue manager approval for ticket %s: %s", ticket.ticket_id, e)
 
+    record_event(db, ticket.ticket_id, "account_agent", "response", {
+        "content": response_content,
+        "escalated": needs_escalation,
+        "method": method,
+        "intent": intent.action,
+    })
+    record_resolution(db, ticket.ticket_id, response_content, needs_escalation)
+    db.commit()
+
     # Create response message
     response_message = AgentMessage(
         agent_name="account_agent",
@@ -72,11 +87,6 @@ async def handle_ticket(ticket_data: dict, db: Session = Depends(get_db)):
         timestamp=datetime.now(),
         confidence_score=0.95 if not needs_escalation else 0.8
     )
-
-    record_event(db, ticket.ticket_id, "account_agent", "response",
-                 {"content": response_content, "escalated": needs_escalation})
-    record_resolution(db, ticket.ticket_id, response_content, needs_escalation)
-    db.commit()
 
     return {
         "status": "handled",

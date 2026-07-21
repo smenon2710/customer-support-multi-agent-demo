@@ -108,9 +108,20 @@ reads/writes real (simulated) license state; dashboard shows real numbers.
 
 ---
 
-## Phase 2 — Hybrid intelligence (the core upgrade)
+## Phase 2 — Hybrid intelligence (the core upgrade) ✅ Done
 
 Goal: rules stay for the cheap/fast path; Claude handles what rules can't.
+
+**Implementation notes vs. the sketch below:** the shipped `shared/llm_client.py` matches this section's
+`complete_json` closely, with two additions — a `client` param for test injection (no network access needed
+to test the retry/validation logic) and a broad `except Exception` catch (not just rate-limit/connection
+errors) so *any* provider failure degrades gracefully, never raises. Two deliberate deviations, documented
+in `CLAUDE.md`: (1) the technical agent's retrieval step is Python-side scored keyword matching, not
+Postgres `tsvector`, so it works identically on the SQLite fallback this project also runs on; (2) the
+technical agent's LLM-unavailable fallback preserves the matched article's own `escalate` flag (matching
+Phase 1's already-working autonomous resolution) rather than force-escalating — a missing API key must not
+make a working resolution start escalating. The router's and account agent's rules-first/LLM-fallback
+pattern matches the sketch as written.
 
 ### 2a. Router: rules first, LLM for ambiguous cases
 

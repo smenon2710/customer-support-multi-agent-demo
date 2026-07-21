@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agents.technical_agent.main import app
+from shared.db.models import TicketEvent
 from shared.db.session import get_db
 
 
@@ -53,3 +54,20 @@ def test_handle_ticket_escalates_unknown_issue(client):
     assert response.status_code == 200
     body = response.json()
     assert body["escalated"] is True
+
+
+def test_handle_ticket_records_method_and_articles_used(client, seeded_db):
+    response = client.post(
+        "/handle_ticket",
+        json=_ticket_payload("Dashboard slow", "The dashboard is slow and keeps loading."),
+    )
+    assert response.status_code == 200
+
+    event = seeded_db.query(TicketEvent).filter(
+        TicketEvent.ticket_id == "T001", TicketEvent.action == "response"
+    ).first()
+    assert event is not None
+    # No OPENROUTER_API_KEY is configured in the test environment, so this always
+    # exercises the rules fallback.
+    assert event.payload["method"] == "rules"
+    assert "Dashboard Loading Issues" in event.payload["kb_articles_used"]

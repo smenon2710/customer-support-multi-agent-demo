@@ -36,8 +36,10 @@ async def health():
 
 @app.post("/route_ticket")
 async def route_ticket(ticket: SupportTicket, db: Session = Depends(get_db)):
-    # Classify the ticket
-    category, priority = router_logic.classify_ticket(ticket)
+    # Classify the ticket — rules first, falling through to the LLM only when the
+    # rule signal is weak (see RouterLogic.classify).
+    decision = router_logic.classify(ticket)
+    category, priority = decision.category, decision.priority
     ticket.category = category
     ticket.priority = priority
 
@@ -56,6 +58,8 @@ async def route_ticket(ticket: SupportTicket, db: Session = Depends(get_db)):
         "category": category.value,
         "priority": priority.value,
         "assigned_agent": target_agent,
+        "method": decision.method,
+        "confidence": decision.confidence,
     })
     db.commit()
 
@@ -77,9 +81,10 @@ async def route_ticket(ticket: SupportTicket, db: Session = Depends(get_db)):
     routing_message = AgentMessage(
         agent_name="router_agent",
         message_type="classification",
-        content=f"Classified as {category.value} with {priority.value} priority. Routed to {target_agent}.",
+        content=f"Classified as {category.value} with {priority.value} priority "
+                f"(via {decision.method}). Routed to {target_agent}.",
         timestamp=datetime.now(),
-        confidence_score=0.85
+        confidence_score=decision.confidence
     )
 
     return {

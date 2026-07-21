@@ -76,7 +76,15 @@ redis-server
    seed it once:
 python -m scripts.seed_db
 
-4. **Start All Agents** (run each from the project root, using `-m` so the
+4. **(Optional) Enable the LLM layer.** Copy `.env.example` to `.env` and set
+   `OPENROUTER_API_KEY` (free at https://openrouter.ai/keys) to turn on
+   LLM-backed classification and response generation for the cases the rule
+   engine can't confidently handle on its own. Without it, every agent runs in
+   pure rules-only mode — nothing breaks, it's just less capable on ambiguous
+   tickets. Docker Compose picks up `.env` automatically; for local runs export
+   the variables in your shell instead.
+
+5. **Start All Agents** (run each from the project root, using `-m` so the
    `shared` package resolves correctly)
 Terminal 1: Router Agent
 python -m agents.router_agent.main
@@ -88,7 +96,7 @@ Terminal 3: Account Agent
 python -m agents.account_agent.main
 
 
-5. **Launch Demo Interface**
+6. **Launch Demo Interface**
 streamlit run demo/streamlit_interface.py
 
 ## 🧪 Running Tests
@@ -113,6 +121,29 @@ seeded. Account-related reads/writes go through `shared/tableau_service.py`'s
 `TableauBackend` interface (`SimulatedTableauBackend` today); a future integration with the
 real Tableau REST API can implement the same interface without touching agent code.
 
+## 🧠 Hybrid Intelligence
+
+Each agent tries fast, deterministic keyword rules first; only when the rule signal is
+genuinely weak does it fall through to an LLM call via OpenRouter (`shared/llm_client.py`).
+This keeps the system fully functional — same answers as before — with `OPENROUTER_API_KEY`
+unset, and adds real capability when it's configured:
+
+- **Router** classifies with keyword scoring and computes a real confidence from the
+  score margin; below a threshold, it asks the LLM for a second opinion. Business-rule
+  priority floors (e.g. Trading/Risk/Executive → at least HIGH) apply to the LLM's
+  suggestion exactly as they do to the rule engine's own default — that's policy, not
+  something to infer.
+- **Technical agent** retrieves the best-matching knowledge base articles, then asks the
+  LLM to write a grounded answer citing only those articles (RAG) — it's instructed to
+  escalate rather than invent steps the KB doesn't support. If the LLM is unavailable, it
+  falls back to serving the top article directly, with that article's own escalation flag
+  — the same behavior the agent had before the LLM existed.
+- **Account agent** uses rule keywords to detect add/remove/permission requests (and
+  always extracts a literal email via regex — no LLM needed for that); only a request with
+  no rule match at all goes to the LLM for intent extraction. Execution is always
+  deterministic — capacity checks and provisioning run against `TableauBackend`, never the
+  model's judgment.
+
 ## 📊 Demo Scenarios
 
 - **🚨 Critical**: Trading dashboard outages (2-second resolution)
@@ -124,6 +155,7 @@ real Tableau REST API can implement the same interface without touching agent co
 
 - **Backend**: FastAPI, Python 3.9+, Pydantic data models
 - **Persistence**: PostgreSQL (SQLite for local dev), SQLAlchemy ORM
+- **Intelligence**: Rule-based classification + OpenRouter LLM fallback (RAG for technical support)
 - **Communication**: HTTP REST APIs, Redis message queuing
 - **Frontend**: Streamlit interactive interface
 - **Deployment**: Docker containers, scalable architecture
@@ -143,11 +175,12 @@ Access the interactive demo at `http://localhost:8501` to see agents collaborati
 
 See [`docs/UPGRADE_PLAN.md`](docs/UPGRADE_PLAN.md) for the phased plan to turn this from a
 demo into a working system. Done so far: a single orchestration path with env-driven config
-and real failure handling (Phase 0), and persistence — tickets, departments/users/licenses,
-and the technical knowledge base now live in a database instead of Python literals, with a
-real (simulated) Tableau backend and a dashboard that reports actual numbers (Phase 1).
-Still ahead: a hybrid rules+LLM pipeline (OpenRouter free-tier models, RAG-based technical
-support), a human-in-the-loop escalation queue, and cloud deployment.
+and real failure handling (Phase 0); persistence — tickets, departments/users/licenses, and
+the technical knowledge base now live in a database instead of Python literals, with a real
+(simulated) Tableau backend and a dashboard that reports actual numbers (Phase 1); and hybrid
+intelligence — rules stay the fast/free default, an OpenRouter LLM handles ambiguous
+classification and RAG-based technical responses when configured (Phase 2). Still ahead: a
+human-in-the-loop escalation queue and cloud deployment.
 
 ---
 *Built as a portfolio demonstration of multi-agent AI coordination and enterprise software architecture.*

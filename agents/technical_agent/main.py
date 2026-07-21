@@ -5,14 +5,16 @@ import uvicorn
 from fastapi import Depends, FastAPI
 from sqlalchemy.orm import Session
 
-from shared.db.repository import record_escalation, record_event, record_resolution, get_or_create_ticket
+from shared.db.repository import get_or_create_ticket, record_escalation, record_event, record_resolution
 from shared.db.session import get_db, init_db, is_db_healthy
 from shared.message_queue import MessageQueue, MessageQueueError
 from shared.models import AgentMessage, SupportTicket
 
 try:
+    from .rag import generate_response
     from .technical_kb import TechnicalKnowledgeBase
 except ImportError:
+    from rag import generate_response
     from technical_kb import TechnicalKnowledgeBase
 
 logger = logging.getLogger(__name__)
@@ -52,45 +54,39 @@ async def handle_ticket(ticket_data: dict, db: Session = Depends(get_db)):
     ticket = SupportTicket(**ticket_data["ticket"])
     get_or_create_ticket(db, ticket, assigned_agent="technical_agent")
 
-    # Search knowledge base
+    # Retrieve candidate KB articles, then generate a grounded response (RAG).
     ticket_text = f"{ticket.subject} {ticket.description}"
     kb = TechnicalKnowledgeBase(db)
-    solution = kb.find_solution(ticket_text)
+    articles = kb.retrieve(ticket_text)
+    result, method = generate_response(ticket_text, articles)
 
-    if solution:
-        response_content = f"**Technical Solution Found:**\n\n{solution['solution']}"
-
-        if solution['escalate']:
-            response_content += "\n\n⚠️ **Escalation Required:** This issue requires specialized database team assistance."
-            reason = "Database connectivity issue requiring DBA team"
-            record_escalation(db, ticket.ticket_id, "technical_agent", reason, "escalation_queue")
-            _notify_escalation(ticket, reason)
-    else:
-        response_content = "I need to research this issue further. A senior technical specialist will follow up within 2 hours."
-        reason = "Complex technical issue requiring specialist review"
+    if result.escalate:
+        reason = result.escalation_reason or "Escalated by technical agent"
         record_escalation(db, ticket.ticket_id, "technical_agent", reason, "escalation_queue")
         _notify_escalation(ticket, reason)
 
-    escalated = solution['escalate'] if solution else True
+    record_event(db, ticket.ticket_id, "technical_agent", "response", {
+        "content": result.response,
+        "escalated": result.escalate,
+        "method": method,
+        "kb_articles_used": result.kb_articles_used,
+    })
+    record_resolution(db, ticket.ticket_id, result.response, result.escalate)
+    db.commit()
 
     # Create response message
     response_message = AgentMessage(
         agent_name="technical_agent",
         message_type="response",
-        content=response_content,
+        content=result.response,
         timestamp=datetime.now(),
-        confidence_score=0.9 if solution and not solution['escalate'] else 0.6
+        confidence_score=0.9 if not result.escalate else 0.6
     )
-
-    record_event(db, ticket.ticket_id, "technical_agent", "response",
-                 {"content": response_content, "escalated": escalated})
-    record_resolution(db, ticket.ticket_id, response_content, escalated)
-    db.commit()
 
     return {
         "status": "handled",
         "response": response_message.model_dump(mode="json"),
-        "escalated": escalated
+        "escalated": result.escalate
     }
 
 

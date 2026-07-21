@@ -8,6 +8,9 @@ venv/
 # Local SQLite database (default DATABASE_URL fallback)
 *.db
 
+# Local secrets (OPENROUTER_API_KEY etc.) — see .env.example
+.env
+
 # OS files
 .DS_Store
 Thumbs.db

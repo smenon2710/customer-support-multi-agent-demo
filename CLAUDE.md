@@ -6,7 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A portfolio project simulating a multi-agent customer support system for Tableau issues at a fictional
 fintech company. Three FastAPI microservices (router, technical, account) coordinate over HTTP, backed by
-Redis (messaging) and Postgres/SQLite (persistence), fronted by a Streamlit demo UI.
+Redis (messaging), Postgres/SQLite (persistence), and an optional OpenRouter LLM for the cases deterministic
+rules can't confidently handle, fronted by a Streamlit demo UI.
 
 ## Running the system
 
@@ -40,11 +41,13 @@ service hostnames and Postgres.
 
 Tests: `pytest` (config in `pytest.ini`, root `conftest.py` puts the repo root on `sys.path` for
 imports). Covers `RouterLogic`/`TechnicalKnowledgeBase`/`AccountManager`/`SimulatedTableauBackend`/
-`shared/db/repository.py`/`shared/db/metrics.py` directly plus FastAPI `TestClient` tests per
-agent, including `/health`. No Redis, Postgres, or Docker required: `tests/conftest.py` provides
-`db_session` (fresh in-memory SQLite + schema) and `seeded_db` (same, with fixture departments/
-users/KB articles) fixtures, and API tests override the `get_db` FastAPI dependency with them —
-see Persistence below. No lint config or CI yet.
+`shared/db/repository.py`/`shared/db/metrics.py`/`shared/llm_client.py` directly plus FastAPI
+`TestClient` tests per agent, including `/health`. No Redis, Postgres, Docker, or
+`OPENROUTER_API_KEY` required: `tests/conftest.py` provides `db_session` (fresh in-memory SQLite +
+schema) and `seeded_db` (same, with fixture departments/users/KB articles) fixtures, API tests
+override the `get_db` FastAPI dependency with them (see Persistence below), and with no API key
+configured every LLM-touching test exercises the real rules-only fallback path end to end rather
+than needing a mock — see Hybrid intelligence below. No lint config or CI yet.
 
 ## Architecture
 
@@ -54,32 +57,47 @@ future caller use it — there is no duplicate implementation). It POSTs to the 
 `/route_ticket` (classifies category + priority, determines the target agent), then POSTs to
 that agent's `/handle_ticket`. Agent endpoints come from `shared/config.py`'s `AGENT_ENDPOINTS`.
 
-**Agent responsibilities:**
-- **Router agent** (`agents/router_agent/main.py`, port 8001): keyword-based classification into
-  `TicketCategory` (technical/account/training) and `Priority` (critical/high/medium/low). Department name
-  in `critical_departments` (Trading, Risk Management, Executive) forces at least HIGH priority; certain
-  keywords force CRITICAL regardless of department. Training-category tickets are currently routed to the
-  technical agent (no dedicated training agent exists). It's also the one that creates the `tickets` row
-  (via `get_or_create_ticket`) — it's normally first to see a ticket.
-- **Technical agent** (`agents/technical_agent/main.py`, port 8002): matches ticket text against the
-  `kb_articles` table (`TechnicalKnowledgeBase`, queried via an injected DB session — one per request) and
-  returns the best-matching article's remediation text. Database-connection issues and unmatched tickets are
-  recorded in the `escalations` table and pushed to the `escalation_queue` in Redis (DB write happens first
-  and is the durable record — see Persistence).
-- **Account agent** (`agents/account_agent/main.py`, port 8003): parses free-text ticket descriptions
-  (regex-extracts a user count, string-matches on "add"/"remove"/"permission") and calls
-  `shared/tableau_service.py`'s `SimulatedTableauBackend` (constructed fresh per request from the injected
-  DB session) to check department capacity against real `departments`/`users` rows. Capacity-exceeded
-  requests are recorded in `escalations` and pushed to `manager_approval_queue`.
+**Agent responsibilities** (each hybrid: deterministic rules first, LLM only when rules are weak/absent —
+see Hybrid intelligence below for the shared pattern):
+- **Router agent** (`agents/router_agent/main.py`, port 8001): `RouterLogic.classify_ticket()` does
+  keyword-based classification into `TicketCategory` (technical/account/training) and `Priority`
+  (critical/high/medium/low), plus a real confidence score from the keyword-score margin (not a hardcoded
+  number). `classify()` wraps it: below `CONFIDENCE_THRESHOLD` (0.6), it asks the LLM for a second opinion.
+  Department name in `critical_departments` (Trading, Risk Management, Executive) forces at least HIGH
+  priority; certain keywords force CRITICAL — both apply to an LLM-suggested priority exactly as they do to
+  the rule engine's own default (`_apply_priority_policy`), since those are policy, not something to infer.
+  Training-category tickets are currently routed to the technical agent (no dedicated training agent
+  exists). It's also the one that creates the `tickets` row (via `get_or_create_ticket`) — it's normally
+  first to see a ticket.
+- **Technical agent** (`agents/technical_agent/main.py`, port 8002): `TechnicalKnowledgeBase.retrieve()`
+  (`technical_kb.py`) scores every `kb_articles` row by symptom-keyword overlap and returns the top 3 —
+  the retrieval half of RAG. `rag.py`'s `generate_response()` asks the LLM to write an answer grounded only
+  in those articles; if the LLM is unavailable it falls back to serving the top article's body directly,
+  using *that article's own* `escalate` flag — the exact behavior the agent had before the LLM existed, so a
+  missing API key never turns an already-working autonomous resolution into a forced escalation. Escalations
+  are recorded in the `escalations` table and pushed to the `escalation_queue` in Redis (DB write happens
+  first and is the durable record — see Persistence).
+- **Account agent** (`agents/account_agent/main.py`, port 8003): `intent.py`'s `extract_intent()` matches
+  rule keywords ("add"/"remove"/"permission") and always regex-extracts any literal email in the text (no
+  LLM needed for that — it's unambiguous either way); only text matching none of the rules falls through to
+  the LLM. `account_manager.py`'s `AccountManager.build_response()` takes the resulting `AccountIntent` and
+  executes deterministically against `shared/tableau_service.py`'s `SimulatedTableauBackend` (constructed
+  fresh per request from the injected DB session) — capacity checks, and now also actually calling
+  `deactivate_user()` when a removal request includes a real email. The model never decides whether licenses
+  exist; it only helps parse what the user asked for. Capacity-exceeded requests are recorded in
+  `escalations` and pushed to `manager_approval_queue`.
 
-Each agent's core logic class (`RouterLogic`, `TechnicalKnowledgeBase`, `AccountManager`) lives in its own
-sibling module (`router_logic.py`, `technical_kb.py`, `account_manager.py`); `main.py` is thin FastAPI
-wiring — `/health` plus the one business endpoint. Because Docker copies each agent's directory flattened
-into `/app` (so `main.py` and `router_logic.py` land as siblings with no `agents.router_agent` package),
-while local runs and pytest see the full `agents.<agent>.*` package, each `main.py` imports its logic module
-with a fallback: `try: from .router_logic import RouterLogic / except ImportError: from router_logic import
-RouterLogic`. Don't "simplify" this to a plain relative or plain absolute import — either breaks one of the
-two execution contexts.
+Each agent's core logic lives in its own sibling module(s) beside `main.py` — `router_logic.py`;
+`technical_kb.py` + `rag.py`; `account_manager.py` + `intent.py` — never inline in `main.py`, which stays
+thin FastAPI wiring (`/health` plus the one business endpoint). Because Docker copies each agent's directory
+flattened into `/app` (so these modules land as siblings with no `agents.router_agent` package), while local
+runs and pytest see the full `agents.<agent>.*` package, every intra-agent import between these sibling
+modules (in `main.py` and in `account_manager.py` importing from `intent.py`) uses a fallback: `try: from
+.router_logic import RouterLogic / except ImportError: from router_logic import RouterLogic`. Don't
+"simplify" this to a plain relative or plain absolute import — either breaks one of the two execution
+contexts. `router_logic.py`, `technical_kb.py`, `rag.py`, and `intent.py` themselves only need this pattern
+if they import from *another sibling module* in the same agent directory — they import `shared.*` modules
+(which live in a real top-level package in both layouts) with plain absolute imports.
 
 **Messaging:** `shared/message_queue.py`'s `MessageQueue` wraps Redis list push/pop (`lpush`/`brpop`).
 There is no in-memory fallback — if Redis is unreachable at construction it logs a warning and
@@ -122,6 +140,29 @@ hardcoded `AccountManager.user_database` used, a Faker-generated `User` row per 
 computes `current_users` via `COUNT(*) WHERE status='active'`), and `kb_articles` from `data/kb_articles.json`.
 Idempotent — skips if `departments` is already populated. Run via `python -m scripts.seed_db` (needs the
 `-m` form for the same `sys.path` reason as the agents) or the Docker Compose `db-seed` service.
+
+**Hybrid intelligence** (`shared/llm_client.py`): a single `complete_json(model, system, user, schema,
+retries=1, client=None)` wraps every LLM call, via the OpenAI SDK pointed at OpenRouter
+(`https://openrouter.ai/api/v1`). It **never raises** — no `OPENROUTER_API_KEY` configured, a rate limit, a
+network/server error, or output that never validates against `schema` after one retry all return `None`.
+Every call site (router, technical, account) treats `None` identically: fall back to the deterministic rule
+path. This is why the whole system runs correctly with no API key at all — every hybrid method
+(`RouterLogic.classify`, `rag.generate_response`, `intent.extract_intent`) is unconditionally safe to call
+either way, and the test suite exercises the real fallback path (not a mock) simply by not setting the key.
+The `client` param exists purely for test injection (`tests/test_llm_client.py` uses a small fake
+duck-typing `.chat.completions.create(...)`) — production call sites never pass it, they get the lazily-
+constructed module-level client. Models are configured via `shared/config.py`'s `CLASSIFIER_MODEL`
+(router + account intent) and `GENERATION_MODEL` (technical RAG), both defaulting to a free OpenRouter
+model — see `docs/UPGRADE_PLAN.md` Phase 2 for the free-tier rate-limit constraints this is designed around.
+
+**Deviations from the plan doc, both deliberate:** (1) KB retrieval (`TechnicalKnowledgeBase.retrieve`) uses
+Python-side scored keyword matching, not Postgres `tsvector` full-text search as the plan sketched — the
+project also runs on SQLite (tests, local dev default), and at this KB scale the retrieval-quality
+difference is negligible. (2) When the LLM is unavailable, the technical agent's fallback preserves the
+matched article's *own* `escalate` flag rather than force-escalating outright (which is what the plan's
+original code sketch did) — a missing/rate-limited API key must not make an already-working autonomous
+resolution start escalating; the LLM only improves *how* the answer reads, not *whether* the system can
+answer at all.
 
 **Unused/dead code:** `data/mock_tickets.json` and `data/company_data.json` are still not read by any Python
 code. `data/kb_articles.json` is now used — by `scripts/seed_db.py` only, not read at agent runtime (the
