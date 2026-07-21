@@ -1,0 +1,76 @@
+# Render Blueprint — deploys the three agent services on Render's free tier.
+# https://render.com/docs/blueprint-spec
+#
+# This is the $0 cloud deployment path (docs/DEPLOYMENT.md), separate from
+# `docker compose up` (local/self-hosted). The demo UI (Streamlit Community
+# Cloud) and Postgres (Neon) are deployed independently — see the guide.
+#
+# All env vars below are `sync: false`, meaning Render prompts for each value
+# in the dashboard rather than storing it in this file (correct for secrets,
+# and for DATABASE_URL since it's an external Neon connection string, not
+# something to commit). Set INTERNAL_API_TOKEN to the same random string on
+# all three services and in the Streamlit Cloud secrets — these become public
+# URLs, and that header is what keeps them from being open to anyone.
+services:
+  - type: web
+    name: tableau-router-agent
+    runtime: docker
+    dockerfilePath: ./agents/router_agent/Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: INTERNAL_API_TOKEN
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: CLASSIFIER_MODEL
+        sync: false
+      - key: GENERATION_MODEL
+        sync: false
+
+  - type: web
+    name: tableau-technical-agent
+    runtime: docker
+    dockerfilePath: ./agents/technical_agent/Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: INTERNAL_API_TOKEN
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: CLASSIFIER_MODEL
+        sync: false
+      - key: GENERATION_MODEL
+        sync: false
+
+  - type: web
+    name: tableau-account-agent
+    runtime: docker
+    dockerfilePath: ./agents/account_agent/Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: INTERNAL_API_TOKEN
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: CLASSIFIER_MODEL
+        sync: false
+      - key: GENERATION_MODEL
+        sync: false

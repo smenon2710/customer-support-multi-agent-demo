@@ -9,7 +9,8 @@ fintech company. Three FastAPI microservices (router, technical, account) coordi
 Redis (messaging), Postgres/SQLite (persistence), and an optional OpenRouter LLM for the cases deterministic
 rules can't confidently handle, fronted by a Streamlit demo UI with a human-in-the-loop review queue for
 anything an agent escalates. Internal endpoints are optionally shared-secret-protected, every log line is
-JSON with ticket-ID correlation, and GitHub Actions runs lint/tests/docker-build on every push.
+JSON with ticket-ID correlation, and GitHub Actions runs lint/tests/docker-build on every push. Deployable
+for $0 across Neon/Render/Streamlit Community Cloud — see Cloud deployment below and `docs/DEPLOYMENT.md`.
 
 ## Running the system
 
@@ -230,6 +231,32 @@ record's `ticket_id` field for the rest of that request — safe under FastAPI b
 its own asyncio Task and contextvars are isolated per Task, so concurrent requests never bleed into each
 other's logs. Each agent calls `set_ticket_id` at the top of its business endpoint, right after parsing the
 ticket; `orchestrator.py` calls it at the top of `process_support_ticket`.
+
+**Cloud deployment** (`render.yaml`, `docs/DEPLOYMENT.md`): the $0 path is Neon (Postgres) + Render free web
+services (the three agents) + Streamlit Community Cloud (the demo UI) — chosen over a paid VM or other
+free-but-card-required platforms (Oracle Always Free, Google Cloud Run) specifically because none of these
+three require a credit card, so nothing in the stack has a billing mechanism attached at all. Two small code
+changes support it, both backward-compatible (no-ops for local/Docker use):
+- Each agent's `uvicorn.run(...)` binds to `int(os.environ.get("PORT", <fixed port>))` — Render (like most
+  PaaS free tiers) injects `PORT` and requires binding to it; `PORT` is never set locally or in Docker
+  Compose, so this falls through to the existing hardcoded port there.
+- `demo/streamlit_interface.py` bridges `st.secrets` into `os.environ` (wrapped in `try/except`, since
+  `st.secrets` has nothing to iterate — and may error — when no `secrets.toml` exists, i.e. every non-Cloud
+  run) before importing `shared/config.py`. Streamlit Community Cloud only exposes configured secrets via
+  `st.secrets`, not the process environment, so without this bridge `shared/config.py`'s ordinary
+  `os.environ.get(...)` calls would see nothing on Streamlit Cloud specifically.
+
+`render.yaml` is a Blueprint (`runtime: docker`, one service per agent, `plan: free`,
+`healthCheckPath: /health`); its env vars are all `sync: false` (set per-service in the Render dashboard, not
+committed). `INTERNAL_API_TOKEN` — opt-in since Phase 4 with nothing that truly needed it while everything
+ran on localhost/the compose network — becomes load-bearing here: once the three agents have public Render
+URLs, it's the only thing gating `/route_ticket`/`/handle_ticket` from the open internet, so
+`docs/DEPLOYMENT.md` makes setting it a required step. Redis is deliberately not part of this deployment —
+skip it rather than add a fourth signup; the system has tolerated Redis being unreachable since Phase 0
+(`/health` reports `degraded`, nothing else breaks, since the database — not Redis — has been the durable
+record since Phase 1). Seeding the deployed Neon database is a manual one-time step
+(`DATABASE_URL=<neon-url> python -m scripts.seed_db` from a local machine) since Neon's free tier has no
+built-in job runner to automate it.
 
 **Unused/dead code:** `data/mock_tickets.json` and `data/company_data.json` are still not read by any Python
 code. `data/kb_articles.json` is now used — by `scripts/seed_db.py` only, not read at agent runtime (the

@@ -11,6 +11,19 @@ from datetime import datetime
 import requests
 import streamlit as st
 
+# Streamlit Community Cloud exposes configured secrets via st.secrets, not the
+# process environment — bridge them into os.environ so shared/config.py's plain
+# os.environ.get() calls work unchanged whether we're running locally, in
+# Docker, or on Streamlit Cloud. Must happen before importing shared.config,
+# which reads these at import time. Safe locally too: st.secrets is just empty
+# when no secrets.toml exists, and this never overwrites a real env var already
+# set (e.g. by Docker Compose).
+try:
+    for _key, _value in st.secrets.items():
+        os.environ.setdefault(_key, str(_value))
+except Exception:
+    pass  # no Streamlit secrets configured — env vars come from the shell/.env instead
+
 from shared.config import AGENT_ENDPOINTS
 from shared.db.metrics import compute_llm_availability, compute_ticket_metrics
 from shared.db.session import SessionLocal

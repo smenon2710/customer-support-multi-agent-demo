@@ -176,6 +176,16 @@ there's a full audit trail from ticket submission through resolution.
   why) is logged to the database and surfaced on the System Architecture tab, so you can
   see exactly how often the LLM layer is actually available versus falling back to rules.
 
+## ☁️ Deploy for $0
+
+Want a public URL instead of running locally? See **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)**
+for step-by-step setup across three platforms — Neon (Postgres), Render (the three
+agents), Streamlit Community Cloud (the demo UI) — chosen specifically because **none of
+them require a credit card**, so there's no billing mechanism attached anywhere in the
+stack that could ever charge you. Trade-off: Render's free services sleep after ~15 min
+idle, so the first request after a quiet period is slow to wake up — fine for a
+portfolio demo, not for real traffic.
+
 ## 📊 Demo Scenarios
 
 - **🚨 Critical**: Trading dashboard outages (2-second resolution)
@@ -191,7 +201,7 @@ there's a full audit trail from ticket submission through resolution.
 - **Communication**: HTTP REST APIs, Redis message queuing
 - **Security & Observability**: Shared-secret internal auth, structured JSON logging, LLM availability tracking
 - **Frontend**: Streamlit interactive interface
-- **Deployment**: Docker containers, scalable architecture
+- **Deployment**: Docker containers locally; Neon + Render + Streamlit Community Cloud for a $0 public deployment (no card required anywhere — see `docs/DEPLOYMENT.md`)
 - **CI**: GitHub Actions (lint, tests, Docker build)
 
 ## 📈 Business Impact
@@ -215,9 +225,11 @@ the technical knowledge base now live in a database instead of Python literals, 
 intelligence — rules stay the fast/free default, an OpenRouter LLM handles ambiguous
 classification and RAG-based technical responses when configured (Phase 2); a closed
 escalation loop — a Human Review tab with Approve/Edit/Reject actions and a full audit trail,
-so nothing an agent escalates is ever fire-and-forget (Phase 3); and hardening — internal
+so nothing an agent escalates is ever fire-and-forget (Phase 3); hardening — internal
 service auth, structured JSON logging with ticket correlation, typed LLM error handling with
-availability tracking, and CI (Phase 4). Still ahead: cloud deployment.
+availability tracking, and CI (Phase 4); and a $0 cloud deployment path across Neon, Render,
+and Streamlit Community Cloud — no credit card required anywhere in the stack (Phase 5). All
+five phases are done.
 
 ---
 *Built as a portfolio demonstration of multi-agent AI coordination and enterprise software architecture.*

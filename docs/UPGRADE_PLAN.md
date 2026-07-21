@@ -323,7 +323,64 @@ Deliverable: no message is ever fire-and-forget; every escalation is visible and
 
 ---
 
-## Phase 5 — Cloud deployment
+## Phase 5 — Cloud deployment ✅ Done
+
+**Revised for a hard $0 constraint** — the original plan below (a ~$10–20/mo VM) was
+replaced outright, not adapted, because the user required zero ongoing cost with no
+exceptions. The chosen path — Neon (Postgres) + Render free web services (the three
+agents) + Streamlit Community Cloud (the demo UI) — is the strongest $0 guarantee among
+the options considered: **none of the three platforms require a credit card**, so there
+is no billing mechanism attached anywhere in the stack by which a charge could occur.
+Two alternatives were considered and rejected for this reason alone, not capability: a
+single Oracle Cloud "Always Free" VM (closer to the original single-VM design, but
+requires a card for identity verification and has unreliable signup capacity) and Google
+Cloud Run (a more generous/reliable free tier, but also requires a card on file). Full
+setup steps: **`docs/DEPLOYMENT.md`**.
+
+What changed in the codebase to support this (small, since the architecture was already
+container-per-service and env-driven from Phase 0):
+
+1. **PORT binding.** Render (like most PaaS free tiers) injects a `PORT` env var and
+   requires binding to it — each agent's `uvicorn.run(...)` now reads
+   `int(os.environ.get("PORT", <fixed port>))`, falling back to the existing hardcoded
+   port for local/Docker Compose use where `PORT` is never set. No `docker-compose.yml`
+   changes needed.
+2. **Streamlit Cloud secrets bridge.** Streamlit Community Cloud exposes configured
+   secrets via `st.secrets`, not the process environment. `demo/streamlit_interface.py`
+   now bridges `st.secrets` into `os.environ` (guarded — a no-op locally, where no
+   `secrets.toml` exists) before importing `shared/config.py`, so the same
+   `os.environ.get(...)` calls that already work locally and in Docker work unchanged on
+   Streamlit Cloud too — no fork in `shared/config.py` itself.
+3. **`render.yaml`** — a Blueprint defining the three agent services (`runtime: docker`,
+   pointed at each agent's existing Dockerfile, `plan: free`, `healthCheckPath: /health`).
+   Env vars are `sync: false` (set per-service in the Render dashboard, not committed) —
+   `DATABASE_URL` (Neon), `INTERNAL_API_TOKEN`, and the already-optional
+   `OPENROUTER_API_KEY`/`CLASSIFIER_MODEL`/`GENERATION_MODEL`.
+4. **No code changes needed for Redis.** The system has tolerated Redis being unreachable
+   since Phase 0 (`MessageQueue` logs a warning, `/health` reports `degraded`, nothing
+   else breaks — the database has been the durable record since Phase 1). The $0 guide
+   recommends skipping Redis entirely rather than adding a fourth platform signup;
+   Upstash's free tier is noted as an optional way to get `/health` fully green.
+5. **`INTERNAL_API_TOKEN` becomes load-bearing.** It was opt-in infrastructure since
+   Phase 4 with no place that truly needed it (everything ran on localhost/the compose
+   network). Once the three agents get public Render URLs, it's the only thing standing
+   between the internet and `/route_ticket`/`/handle_ticket` — the deployment guide makes
+   setting it a required step, not a mentioned option.
+
+**Trade-offs accepted for $0:** Render's free web services sleep after ~15 minutes idle
+(cold start of a few seconds to ~1 minute on the next request) — fine for a portfolio
+demo, not for real user traffic. Free-tier terms across all three platforms can change
+without notice; `docs/DEPLOYMENT.md` flags this and tells the reader what to watch for
+(any signup step asking for payment details means the free tier has changed since this
+was written).
+
+**Migration path if the $0 constraint is later relaxed:** because every piece is
+env-driven (Phase 0) and container-per-service (already true), moving to a paid VM,
+ECS, or Cloud Run later is a hosting change, not a code change — the original
+single-VM plan below is still valid if ever needed.
+
+<details>
+<summary>Original plan (superseded — kept for reference)</summary>
 
 Recommended: **a single small VM running Docker Compose** (e.g. EC2 t3.small / Lightsail /
 DigitalOcean droplet, ~$10–20/mo). The system is 5 small containers with modest traffic;
@@ -346,6 +403,8 @@ Steps:
 
 Migration path: because config is env-driven (Phase 0), moving to ECS/Cloud Run later is a
 packaging change, not a code change.
+
+</details>
 
 ---
 

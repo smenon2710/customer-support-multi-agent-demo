@@ -1,4 +1,5 @@
 import logging
+import os
 from datetime import datetime
 
 import uvicorn
@@ -98,4 +99,6 @@ async def handle_ticket(ticket_data: dict, db: Session = Depends(get_db)):
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8002)
+    # PaaS free tiers (Render, etc.) inject PORT and require binding to it;
+    # falls back to the fixed port for local/Docker Compose use.
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8002)))
