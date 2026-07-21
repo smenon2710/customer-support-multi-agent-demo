@@ -234,29 +234,33 @@ def live_demo_interface():
             st.success("Ticket submitted — form is reset and ready for a new one.")
 
         if submit_clicked:
-            ticket = SupportTicket(
-                ticket_id=f"T{uuid.uuid4().hex[:6].upper()}",
-                user_email=user_email,
-                department=department,
-                subject=subject,
-                description=description,
-                created_at=datetime.now(),
-                messages=[],
-            )
+            if subject_choice == "Other" and not subject.strip():
+                st.error("Please briefly describe your issue before submitting.")
+            else:
+                ticket = SupportTicket(
+                    ticket_id=f"T{uuid.uuid4().hex[:6].upper()}",
+                    user_email=user_email,
+                    department=department,
+                    subject=subject,
+                    description=description,
+                    created_at=datetime.now(),
+                    messages=[],
+                )
 
-            with st.spinner(
-                "Agents are collaborating to resolve your issue — this can take "
-                "longer than usual if a free-tier agent is waking up from idle..."
-            ):
-                result = orchestrator.process_support_ticket(ticket)
+                with st.spinner(
+                    "Agents are collaborating to resolve your issue — this can take "
+                    "longer than usual if a free-tier agent is waking up from idle..."
+                ):
+                    result = orchestrator.process_support_ticket(ticket)
 
-            st.session_state['last_result'] = result
+                st.session_state['last_result'] = result
 
-            # Reset the form so it's visually obvious this isn't still showing what
-            # was just submitted — applied at the top of the next run (see above),
-            # not here, since these widgets already rendered earlier in this run.
-            st.session_state["_reset_ticket_form"] = True
-            st.rerun()
+                # Reset the form so it's visually obvious this isn't still showing
+                # what was just submitted — applied at the top of the next run (see
+                # above), not here, since these widgets already rendered earlier in
+                # this run.
+                st.session_state["_reset_ticket_form"] = True
+                st.rerun()
 
     with col2:
         st.subheader("Agent Coordination Results")

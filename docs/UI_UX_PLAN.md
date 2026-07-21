@@ -170,3 +170,19 @@ whether to resubmit, risking an accidental duplicate.
   submitted, and confirmed the description field cleared, the subject dropdown reset to the
   top-ranked choice, the confirmation message appeared, and the result still rendered
   correctly in the right-hand column — all with no exception.
+
+## Follow-up 5: validate the empty "Other" subject field
+
+Selecting "Other" and submitting with nothing typed previously sent an empty subject
+through the whole pipeline — not a crash, but a poorly-classified, confusing ticket.
+
+- `live_demo_interface()` now checks `subject_choice == "Other" and not subject.strip()`
+  before doing anything else on submit; on a blank/whitespace-only "Other" description it
+  shows `st.error("Please briefly describe your issue before submitting.")` and skips
+  ticket construction, the orchestrator call, and the form reset entirely — the user's
+  other field values (email, subject selection) are left untouched so they can just fill in
+  the missing field and resubmit.
+- Verified via `AppTest` against the real backend: selecting "Other" and submitting with
+  the description field empty shows the error and confirms no ticket was processed
+  (`last_result` never gets set); filling in the field and resubmitting proceeds through
+  the full pipeline exactly as before, with no exception either way.
