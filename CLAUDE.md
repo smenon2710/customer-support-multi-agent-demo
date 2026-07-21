@@ -45,9 +45,9 @@ business endpoints — see Hardening below.
 
 Tests: `pytest` (config in `pytest.ini`, root `conftest.py` puts the repo root on `sys.path` for
 imports). Covers `RouterLogic`/`TechnicalKnowledgeBase`/`AccountManager`/`SimulatedTableauBackend`/
-`shared/db/repository.py`/`shared/db/metrics.py`/`shared/llm_client.py`/`shared/auth.py`/
-`shared/logging_config.py` directly plus FastAPI `TestClient` tests per agent, including `/health`
-and auth enforcement. No Redis, Postgres, Docker, or `OPENROUTER_API_KEY` required:
+`resolution_cache.find_cached_resolution`/`shared/db/repository.py`/`shared/db/metrics.py`/
+`shared/llm_client.py`/`shared/auth.py`/`shared/logging_config.py` directly plus FastAPI `TestClient`
+tests per agent, including `/health` and auth enforcement. No Redis, Postgres, Docker, or `OPENROUTER_API_KEY` required:
 `tests/conftest.py` provides `db_session` (fresh in-memory SQLite + schema) and `seeded_db` (same,
 with fixture departments/users/KB articles) fixtures, API tests override the `get_db` FastAPI
 dependency with them (see Persistence below), and with no API key configured every LLM-touching

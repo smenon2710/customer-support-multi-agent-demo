@@ -23,6 +23,14 @@ Large financial institutions with 5,000+ Tableau users face:
 - **Specialist Routing**: Technical vs. account issues handled by experts
 - **Escalation Logic**: Complex issues automatically escalated to humans
 - **Enterprise Context**: Realistic departmental data and business logic
+- **User Directory Lookup**: ticket submission looks up the user's email against the real
+  seeded directory and derives their department automatically, rather than asking them to
+  self-report it
+- **Self-Learning Subject Ranking**: the ticket form's subject dropdown is ranked by real
+  historical submission frequency, not a static list — recurring issues climb the ranking
+  over time
+- **Resolution Caching**: a repeat issue (same subject as a prior resolved ticket) reuses
+  that resolution directly instead of re-running knowledge base retrieval and the LLM
 
 ## 🚀 Quick Start
 
@@ -143,11 +151,14 @@ unset, and adds real capability when it's configured:
   priority floors (e.g. Trading/Risk/Executive → at least HIGH) apply to the LLM's
   suggestion exactly as they do to the rule engine's own default — that's policy, not
   something to infer.
-- **Technical agent** retrieves the best-matching knowledge base articles, then asks the
-  LLM to write a grounded answer citing only those articles (RAG) — it's instructed to
-  escalate rather than invent steps the KB doesn't support. If the LLM is unavailable, it
-  falls back to serving the top article directly, with that article's own escalation flag
-  — the same behavior the agent had before the LLM existed.
+- **Technical agent** first checks whether an earlier ticket with the exact same subject
+  already has a recorded resolution — if so, it reuses that resolution verbatim and skips
+  KB retrieval and the LLM entirely (`resolution_cache.py`). Only on a cache miss does it
+  retrieve the best-matching knowledge base articles and ask the LLM to write a grounded
+  answer citing only those articles (RAG) — it's instructed to escalate rather than invent
+  steps the KB doesn't support. If the LLM is unavailable, it falls back to serving the top
+  article directly, with that article's own escalation flag — the same behavior the agent
+  had before the LLM existed.
 - **Account agent** uses rule keywords to detect add/remove/permission requests (and
   always extracts a literal email via regex — no LLM needed for that); only a request with
   no rule match at all goes to the LLM for intent extraction. Execution is always
@@ -186,7 +197,7 @@ stack that could ever charge you. Trade-off: Render's free services sleep after 
 idle, so the first request after a quiet period is slow to wake up — fine for a
 portfolio demo, not for real traffic.
 
-## 📊 Demo Scenarios
+## 📊 Predefined Scenarios
 
 - **🚨 Critical**: Trading dashboard outages (2-second resolution)
 - **👥 Account**: New user provisioning with license checking
@@ -230,6 +241,13 @@ service auth, structured JSON logging with ticket correlation, typed LLM error h
 availability tracking, and CI (Phase 4); and a $0 cloud deployment path across Neon, Render,
 and Streamlit Community Cloud — no credit card required anywhere in the stack (Phase 5). All
 five phases are done.
+
+Since then: live deployment debugging (a Streamlit Cloud dependency-resolution failure, a
+GitHub Actions workflow file rejection, and an OpenRouter free-tier model being discontinued
+mid-project — see `docs/UPGRADE_PLAN.md`'s "Real-world update" note), and a UI/UX pass
+covering cold-start signaling, a directory-backed ticket form, self-learning subject ranking,
+and resolution caching to cut repeat LLM calls — see
+[`docs/UI_UX_PLAN.md`](docs/UI_UX_PLAN.md) for the full history.
 
 ---
 *Built as a portfolio demonstration of multi-agent AI coordination and enterprise software architecture.*
