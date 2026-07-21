@@ -104,12 +104,14 @@ gives you on all three Render services.
 4. Save — Streamlit Cloud redeploys automatically. Open the app URL it gives you.
 
 **If the build fails on `psycopg2-binary` with `pg_config executable not found`:**
-Streamlit Cloud's Python version can be newer than `psycopg2-binary==2.9.9` has a
-prebuilt wheel for (this happened during initial testing — Streamlit Cloud was running
-Python 3.14, released long after that pin). The repo's `.python-version` file pins
-Python to 3.11 for exactly this reason, which `uv` (Streamlit Cloud's build tool) reads
-automatically — if you still hit this, double check the app's **Advanced settings** has
-Python 3.11 selected (or reboot the app from the dashboard to force a fresh build).
+`requirements.txt` pins `psycopg2-binary` to a version confirmed to ship a prebuilt
+wheel for current Python releases (this happened during initial testing — Streamlit
+Cloud provisioned Python 3.14 and the then-pinned `psycopg2-binary==2.9.9`, from 2023,
+had no wheel for it, so pip tried to compile from source and failed with no `pg_config`
+available). If it still fails on a future, even-newer Python, check
+[PyPI's psycopg2-binary file list](https://pypi.org/project/psycopg2-binary/#files) for
+a release with a `cp3<NN>` wheel matching whatever Python Streamlit Cloud is running,
+and bump the pin.
 
 ## 4. Verify
 
