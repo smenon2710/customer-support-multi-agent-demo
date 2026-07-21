@@ -195,7 +195,7 @@ portfolio demo, not for real traffic.
 
 ## 🛠️ Technology Stack
 
-- **Backend**: FastAPI, Python 3.9+, Pydantic data models
+- **Backend**: FastAPI, Python 3.11+, Pydantic data models
 - **Persistence**: PostgreSQL (SQLite for local dev), SQLAlchemy ORM
 - **Intelligence**: Rule-based classification + OpenRouter LLM fallback (RAG for technical support)
 - **Communication**: HTTP REST APIs, Redis message queuing

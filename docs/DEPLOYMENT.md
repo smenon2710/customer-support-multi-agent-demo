@@ -103,15 +103,22 @@ gives you on all three Render services.
    the same code path used locally and in Docker.
 4. Save — Streamlit Cloud redeploys automatically. Open the app URL it gives you.
 
-**If the build fails on `psycopg2-binary` with `pg_config executable not found`:**
-`requirements.txt` pins `psycopg2-binary` to a version confirmed to ship a prebuilt
-wheel for current Python releases (this happened during initial testing — Streamlit
-Cloud provisioned Python 3.14 and the then-pinned `psycopg2-binary==2.9.9`, from 2023,
-had no wheel for it, so pip tried to compile from source and failed with no `pg_config`
-available). If it still fails on a future, even-newer Python, check
-[PyPI's psycopg2-binary file list](https://pypi.org/project/psycopg2-binary/#files) for
-a release with a `cp3<NN>` wheel matching whatever Python Streamlit Cloud is running,
-and bump the pin.
+**If the build fails trying to compile something from source** (`pg_config executable
+not found`, `headers or library files could not be found for zlib`, a Rust/`maturin`
+build error, etc.): Streamlit Cloud provisions whatever current Python release it wants
+(observed jumping straight to Python 3.14 with no way to pin it — `.python-version` is
+not honored by its build tool), ignoring what's pinned locally or in CI. `requirements.txt`
+is pinned to versions confirmed to ship prebuilt wheels for that Python — this took two
+rounds of fixes during initial testing: first `psycopg2-binary` (2.9.9, from 2023, had no
+`cp314` wheel), then `pydantic`/`pydantic-core` and `streamlit`'s own `pillow` dependency
+(also stuck on 2023-era pins with no `cp314` wheel), which cascaded into needing `fastapi`
+and `uvicorn` bumped too since `fastapi>=0.129` requires Python >=3.10 and pulls in a newer
+`starlette` that only newer `streamlit` versions tolerate. If this happens again on a
+future, even-newer Python: check the failing package's PyPI file list for a release with
+a `cp3<NN>` wheel matching whatever Python Streamlit Cloud is running, bump the pin, then
+re-resolve the whole set locally (`pip install` the unpinned packages in a clean venv,
+`pip freeze` the result, verify with `pytest`/`docker compose build` before pushing) rather
+than bumping one package at a time against Streamlit Cloud's build queue.
 
 ## 4. Verify
 
