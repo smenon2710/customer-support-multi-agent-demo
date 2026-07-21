@@ -2,10 +2,14 @@ import logging
 from datetime import datetime
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
+from sqlalchemy.orm import Session
 
+from shared.db.repository import get_or_create_ticket, record_escalation, record_event, record_resolution
+from shared.db.session import get_db, init_db, is_db_healthy
 from shared.message_queue import MessageQueue, MessageQueueError
 from shared.models import AgentMessage, SupportTicket
+from shared.tableau_service import SimulatedTableauBackend
 
 try:
     from .account_manager import AccountManager
@@ -16,20 +20,28 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Account Management Agent")
 mq = MessageQueue()
-account_manager = AccountManager()
+init_db()
 
 
 @app.get("/health")
 async def health():
-    healthy = mq.is_healthy()
-    return {"status": "ok" if healthy else "degraded", "queue_connected": healthy}
+    queue_healthy = mq.is_healthy()
+    db_healthy = is_db_healthy()
+    return {
+        "status": "ok" if queue_healthy and db_healthy else "degraded",
+        "queue_connected": queue_healthy,
+        "db_connected": db_healthy,
+    }
 
 
 @app.post("/handle_ticket")
-async def handle_ticket(ticket_data: dict):
+async def handle_ticket(ticket_data: dict, db: Session = Depends(get_db)):
     ticket = SupportTicket(**ticket_data["ticket"])
+    get_or_create_ticket(db, ticket, assigned_agent="account_agent")
 
     # Process the account request
+    backend = SimulatedTableauBackend(db)
+    account_manager = AccountManager(backend)
     ticket_text = f"{ticket.subject} {ticket.description}"
     response_content = account_manager.process_access_request(ticket_text, ticket.department)
 
@@ -37,11 +49,14 @@ async def handle_ticket(ticket_data: dict):
     needs_escalation = "Manager Approval Required" in response_content
 
     if needs_escalation:
+        reason = "Manager approval required for additional licenses"
+        record_escalation(db, ticket.ticket_id, "account_agent", reason, "manager_approval_queue")
+
         escalation_msg = {
             "ticket": ticket.model_dump(mode="json"),
             "action": "escalate",
             "escalated_by": "account_agent",
-            "reason": "Manager approval required for additional licenses",
+            "reason": reason,
             "timestamp": datetime.now().isoformat(),
         }
         try:
@@ -57,6 +72,11 @@ async def handle_ticket(ticket_data: dict):
         timestamp=datetime.now(),
         confidence_score=0.95 if not needs_escalation else 0.8
     )
+
+    record_event(db, ticket.ticket_id, "account_agent", "response",
+                 {"content": response_content, "escalated": needs_escalation})
+    record_resolution(db, ticket.ticket_id, response_content, needs_escalation)
+    db.commit()
 
     return {
         "status": "handled",

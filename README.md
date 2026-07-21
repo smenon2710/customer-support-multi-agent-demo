@@ -38,7 +38,9 @@ docker compose up --build
 
 This command will:
 Build Docker images for each AI agent and the Streamlit demo app
-Start containers including Redis as the message queue
+Start containers including Redis (message queue) and Postgres (persistence)
+Run a one-off `db-seed` job that populates departments, a Faker-generated user
+population, and the technical knowledge base before any agent starts
 
 Map ports:
 Router Agent on localhost:8001
@@ -67,7 +69,14 @@ pip install -r requirements.txt
 redis-server
 (or `docker run -p 6379:6379 redis:7-alpine`)
 
-3. **Start All Agents** (run each from the project root, using `-m` so the
+3. **Set up the database.** By default `DATABASE_URL` falls back to a local SQLite
+   file (`sqlite:///./support.db`) — nothing to install. To use Postgres instead,
+   run one locally (or `docker run -p 5432:5432 -e POSTGRES_PASSWORD=... postgres:16-alpine`)
+   and export `DATABASE_URL=postgresql://user:pass@localhost:5432/dbname`. Either way,
+   seed it once:
+python -m scripts.seed_db
+
+4. **Start All Agents** (run each from the project root, using `-m` so the
    `shared` package resolves correctly)
 Terminal 1: Router Agent
 python -m agents.router_agent.main
@@ -79,7 +88,7 @@ Terminal 3: Account Agent
 python -m agents.account_agent.main
 
 
-4. **Launch Demo Interface**
+5. **Launch Demo Interface**
 streamlit run demo/streamlit_interface.py
 
 ## 🧪 Running Tests
@@ -89,8 +98,20 @@ pytest
 
 The suite covers the routing/classification, knowledge-base matching, and license-capacity
 logic directly, plus FastAPI `TestClient` tests for each agent's HTTP endpoints (including
-`/health`). No running Redis or Docker is required — agents degrade gracefully when Redis
-is unreachable rather than failing to start.
+`/health`). No running Redis, Postgres, or Docker is required — the database layer is
+exercised against an isolated in-memory SQLite database created fresh per test
+(`tests/conftest.py`), and agents degrade gracefully when Redis is unreachable rather
+than failing to start.
+
+## 🗄️ Database & Seeding
+
+Tickets, departments, users, licenses, the technical knowledge base, and escalations are
+persisted via SQLAlchemy models in `shared/db/`. `scripts/seed_db.py` populates the same
+departmental data the original demo hardcoded, plus a Faker-generated user population
+matching each department's user count — it's idempotent, so re-running it is a no-op once
+seeded. Account-related reads/writes go through `shared/tableau_service.py`'s
+`TableauBackend` interface (`SimulatedTableauBackend` today); a future integration with the
+real Tableau REST API can implement the same interface without touching agent code.
 
 ## 📊 Demo Scenarios
 
@@ -102,6 +123,7 @@ is unreachable rather than failing to start.
 ## 🛠️ Technology Stack
 
 - **Backend**: FastAPI, Python 3.9+, Pydantic data models
+- **Persistence**: PostgreSQL (SQLite for local dev), SQLAlchemy ORM
 - **Communication**: HTTP REST APIs, Redis message queuing
 - **Frontend**: Streamlit interactive interface
 - **Deployment**: Docker containers, scalable architecture
@@ -119,10 +141,13 @@ Access the interactive demo at `http://localhost:8501` to see agents collaborati
 
 ## 🗺️ Roadmap
 
-This repository is currently a demo (rule-based agents, in-memory data, no persistence).
-See [`docs/UPGRADE_PLAN.md`](docs/UPGRADE_PLAN.md) for the phased plan to turn it into a
-working system: persistence, a hybrid rules+LLM pipeline (OpenRouter free-tier models,
-RAG-based technical support), a human-in-the-loop escalation queue, and cloud deployment.
+See [`docs/UPGRADE_PLAN.md`](docs/UPGRADE_PLAN.md) for the phased plan to turn this from a
+demo into a working system. Done so far: a single orchestration path with env-driven config
+and real failure handling (Phase 0), and persistence — tickets, departments/users/licenses,
+and the technical knowledge base now live in a database instead of Python literals, with a
+real (simulated) Tableau backend and a dashboard that reports actual numbers (Phase 1).
+Still ahead: a hybrid rules+LLM pipeline (OpenRouter free-tier models, RAG-based technical
+support), a human-in-the-loop escalation queue, and cloud deployment.
 
 ---
 *Built as a portfolio demonstration of multi-agent AI coordination and enterprise software architecture.*

@@ -11,6 +11,32 @@ services:
       timeout: 5s
       retries: 3
 
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=tableau_support
+      - POSTGRES_PASSWORD=tableau_support_dev
+      - POSTGRES_DB=tableau_support
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tableau_support"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  db-seed:
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://tableau_support:tableau_support_dev@postgres:5432/tableau_support
+
   router-agent:
     build:
       context: .
@@ -20,8 +46,11 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      db-seed:
+        condition: service_completed_successfully
     environment:
       - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://tableau_support:tableau_support_dev@postgres:5432/tableau_support
 
   technical-agent:
     build:
@@ -32,8 +61,11 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      db-seed:
+        condition: service_completed_successfully
     environment:
       - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://tableau_support:tableau_support_dev@postgres:5432/tableau_support
 
   account-agent:
     build:
@@ -44,8 +76,11 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      db-seed:
+        condition: service_completed_successfully
     environment:
       - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://tableau_support:tableau_support_dev@postgres:5432/tableau_support
 
   demo-app:
     build:
@@ -61,3 +96,7 @@ services:
       - ROUTER_URL=http://router-agent:8001
       - TECHNICAL_URL=http://technical-agent:8002
       - ACCOUNT_URL=http://account-agent:8003
+      - DATABASE_URL=postgresql://tableau_support:tableau_support_dev@postgres:5432/tableau_support
+
+volumes:
+  postgres-data:

@@ -2,8 +2,11 @@ import logging
 from datetime import datetime
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
+from sqlalchemy.orm import Session
 
+from shared.db.repository import get_or_create_ticket, record_event
+from shared.db.session import get_db, init_db, is_db_healthy
 from shared.message_queue import MessageQueue, MessageQueueError
 from shared.models import AgentMessage, SupportTicket, TicketCategory
 
@@ -17,16 +20,22 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Router Agent")
 mq = MessageQueue()
 router_logic = RouterLogic()
+init_db()
 
 
 @app.get("/health")
 async def health():
-    healthy = mq.is_healthy()
-    return {"status": "ok" if healthy else "degraded", "queue_connected": healthy}
+    queue_healthy = mq.is_healthy()
+    db_healthy = is_db_healthy()
+    return {
+        "status": "ok" if queue_healthy and db_healthy else "degraded",
+        "queue_connected": queue_healthy,
+        "db_connected": db_healthy,
+    }
 
 
 @app.post("/route_ticket")
-async def route_ticket(ticket: SupportTicket):
+async def route_ticket(ticket: SupportTicket, db: Session = Depends(get_db)):
     # Classify the ticket
     category, priority = router_logic.classify_ticket(ticket)
     ticket.category = category
@@ -41,6 +50,14 @@ async def route_ticket(ticket: SupportTicket):
         target_agent = "technical_agent"  # Training goes to technical for now
 
     ticket.assigned_agent = target_agent
+
+    get_or_create_ticket(db, ticket, assigned_agent=target_agent)
+    record_event(db, ticket.ticket_id, "router_agent", "classification", {
+        "category": category.value,
+        "priority": priority.value,
+        "assigned_agent": target_agent,
+    })
+    db.commit()
 
     # Record the routing decision. Nothing currently consumes this queue — the
     # actual handoff is the orchestrator's direct HTTP call to /handle_ticket —

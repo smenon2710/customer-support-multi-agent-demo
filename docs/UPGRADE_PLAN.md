@@ -10,7 +10,7 @@ upgrade; 3–5 make it production-shaped.
 
 ---
 
-## Phase 0 — Foundations (cleanup and config)
+## Phase 0 — Foundations (cleanup and config) ✅ Done
 
 Goal: remove demo shortcuts that will fight every later phase.
 
@@ -50,36 +50,58 @@ Deliverable: same behavior as today, but one orchestration path, env-driven conf
 
 ---
 
-## Phase 1 — Persistence and the simulated Tableau backend
+## Phase 1 — Persistence and the simulated Tableau backend ✅ Done
 
 Goal: tickets and enterprise data live in a database, not in Python literals.
 
-1. **Database.** Add Postgres to `docker-compose.yml` (SQLite acceptable for local dev via
-   `DATABASE_URL`). Use SQLAlchemy + Alembic migrations. Tables:
+1. **Database.** Postgres in `docker-compose.yml` (SQLite for local dev via `DATABASE_URL`,
+   the default when unset). SQLAlchemy models in `shared/db/models.py`:
    - `tickets` — everything in `SupportTicket` plus `status`, `resolution`, `escalated`,
-     `resolved_at`. Every ticket submission is persisted before routing.
-   - `ticket_events` — the conversation log (agent, action, payload, timestamp) currently
-     thrown away after each request.
+     `resolved_at`. The router agent creates the row (`get_or_create_ticket`); handling
+     agents update it via `record_resolution`.
+   - `ticket_events` — the conversation log (agent, action, payload, timestamp) that used
+     to be thrown away after each request.
    - `departments`, `users`, `licenses` — replaces `AccountManager.user_database`.
-   - `kb_articles` — replaces `TechnicalKnowledgeBase.solutions`; seed from
-     `data/kb_articles.json` (currently empty — populate it as part of this phase).
-   - `escalations` — durable record of anything pushed to an escalation queue.
-2. **Simulated Tableau service.** Create `shared/tableau_service.py` defining an interface
-   the account agent talks to, with a database-backed implementation:
+     `current_users` isn't a stored counter — `SimulatedTableauBackend` computes it as
+     `COUNT(*) WHERE status='active'` against real `User` rows, so capacity checks reflect
+     actual provisioned users, not a number that can drift.
+   - `kb_articles` — replaces `TechnicalKnowledgeBase.solutions`; seeded from
+     `data/kb_articles.json` (now populated) by `scripts/seed_db.py`, not read from the
+     JSON file at agent runtime.
+   - `escalations` — durable record of anything pushed to an escalation queue. Written
+     *before* the Redis push is attempted, so an escalation survives even if Redis is down
+     — Redis is now just a notification signal, not the record of truth.
+
+   **Deviation from the original plan: no Alembic.** The plan called for SQLAlchemy +
+   Alembic migrations; this uses `Base.metadata.create_all()` (idempotent, called at each
+   agent's startup) instead. There's no prior schema to migrate *from* yet, so a migration
+   tool has no history to manage — it would be pure scaffolding. Revisit this when the
+   schema needs to change without a full wipe (add Alembic then, generate an initial
+   migration from the current models, and apply it via a `db-migrate` step in
+   `docker-compose.yml` the same way `db-seed` works today).
+2. **Simulated Tableau service.** `shared/tableau_service.py` defines the interface the
+   account agent talks to, with a database-backed implementation:
    ```python
    class TableauBackend(Protocol):
-       def get_department(self, name: str) -> Department | None: ...
-       def provision_user(self, email: str, department: str, license: str) -> ProvisionResult: ...
+       def get_department(self, name: str) -> Optional[DepartmentInfo]: ...
+       def check_capacity(self, department: str, requested_users: int) -> ProvisionResult: ...
+       def provision_user(self, email: str, department: str) -> bool: ...
        def deactivate_user(self, email: str) -> bool: ...
        def get_site_status(self) -> SiteStatus: ...
    ```
-   The DB-backed `SimulatedTableauBackend` is the only implementation now; a future
-   `TableauCloudBackend` (REST API) slots in behind the same interface without touching
-   agent code. Seed it with the existing department/license numbers plus a Faker-generated
-   user population (Faker is already in `requirements.txt`).
-3. **Real metrics.** The Streamlit "System Metrics" tab currently shows hardcoded numbers.
-   Compute them from the `tickets` table: resolution rate, escalation rate, tickets by
-   department/priority, median handling time.
+   (`check_capacity` replaced the plan's original `provision_user(..., license: str)` shape
+   — actual provisioning needs a concrete email, which the ticket text doesn't have at
+   submission time; `provision_user` here takes just `email`/`department` for when Phase 3's
+   human-review approval flow has one.) The DB-backed `SimulatedTableauBackend` is the only
+   implementation now; a future `TableauCloudBackend` (REST API) slots in behind the same
+   interface without touching agent code. Seeded with the existing department/license
+   numbers plus a Faker-generated user population (`scripts/seed_db.py`).
+3. **Real metrics.** The Streamlit "System Metrics" tab now calls `shared/db/metrics.py`'s
+   `compute_ticket_metrics()` (resolution rate, escalation rate, tickets by department/
+   priority, median handling time) and `SimulatedTableauBackend.get_site_status()` (real
+   user/department counts) instead of showing hardcoded numbers — including removing the
+   fabricated `+12%`/`-45%`-style deltas, since there's no historical baseline to compare
+   against yet.
 
 Deliverable: submit a ticket → it's in Postgres with its full event log; account agent
 reads/writes real (simulated) license state; dashboard shows real numbers.

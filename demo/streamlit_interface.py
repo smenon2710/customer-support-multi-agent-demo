@@ -12,8 +12,11 @@ import requests
 import streamlit as st
 
 from shared.config import AGENT_ENDPOINTS
+from shared.db.metrics import compute_ticket_metrics
+from shared.db.session import SessionLocal
 from shared.models import SupportTicket
 from shared.orchestrator import AgentOrchestrator
+from shared.tableau_service import SimulatedTableauBackend
 
 # Configure page
 st.set_page_config(
@@ -283,18 +286,25 @@ def system_architecture():
     with col2:
         st.subheader("📊 System Metrics")
 
-        # Mock metrics for demonstration
+        db = SessionLocal()
+        try:
+            metrics = compute_ticket_metrics(db)
+            site_status = SimulatedTableauBackend(db).get_site_status()
+        finally:
+            db.close()
+
         metrics_col1, metrics_col2 = st.columns(2)
 
         with metrics_col1:
-            st.metric("Total Users Supported", "5,200+", "+12%")
-            st.metric("Average Response Time", "< 2 sec", "-45%")
-            st.metric("Resolution Rate", "87%", "+23%")
+            st.metric("Total Users Supported", f"{site_status.total_active_users:,}")
+            st.metric("Tickets Processed", f"{metrics.total_tickets:,}")
+            st.metric("Resolution Rate", f"{metrics.resolution_rate:.0%}" if metrics.total_tickets else "—")
 
         with metrics_col2:
-            st.metric("Agent Uptime", "99.8%", "+0.3%")
-            st.metric("Escalation Rate", "13%", "-8%")
-            st.metric("User Satisfaction", "4.6/5", "+0.4")
+            st.metric("Escalation Rate", f"{metrics.escalation_rate:.0%}" if metrics.total_tickets else "—")
+            median = metrics.median_handling_seconds
+            st.metric("Median Handling Time", f"{median:.1f} sec" if median is not None else "—")
+            st.metric("Departments", site_status.total_departments)
 
     st.subheader("🔄 Communication Flow")
     st.markdown("""
@@ -335,7 +345,7 @@ def system_architecture():
         **Deployment**
         - Docker Containers
         - Streamlit Frontend
-        - SQLite Database
+        - PostgreSQL (SQLAlchemy ORM)
         - Scalable Architecture
         """)
 

@@ -1,10 +1,10 @@
 from datetime import datetime
 
+import pytest
 from fastapi.testclient import TestClient
 
 from agents.technical_agent.main import app
-
-client = TestClient(app)
+from shared.db.session import get_db
 
 
 def _ticket_payload(subject, description):
@@ -21,13 +21,20 @@ def _ticket_payload(subject, description):
     }
 
 
-def test_health_reports_status():
+@pytest.fixture()
+def client(seeded_db):
+    app.dependency_overrides[get_db] = lambda: seeded_db
+    yield TestClient(app)
+    app.dependency_overrides.clear()
+
+
+def test_health_reports_status(client):
     response = client.get("/health")
     assert response.status_code == 200
     assert "status" in response.json()
 
 
-def test_handle_ticket_matches_known_issue():
+def test_handle_ticket_matches_known_issue(client):
     response = client.post(
         "/handle_ticket",
         json=_ticket_payload("Dashboard slow", "The dashboard is slow and keeps loading."),
@@ -38,7 +45,7 @@ def test_handle_ticket_matches_known_issue():
     assert body["escalated"] is False
 
 
-def test_handle_ticket_escalates_unknown_issue():
+def test_handle_ticket_escalates_unknown_issue(client):
     response = client.post(
         "/handle_ticket",
         json=_ticket_payload("Random request", "Something completely unrelated to Tableau."),
