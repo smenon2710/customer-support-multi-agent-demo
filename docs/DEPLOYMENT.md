@@ -103,6 +103,14 @@ gives you on all three Render services.
    the same code path used locally and in Docker.
 4. Save — Streamlit Cloud redeploys automatically. Open the app URL it gives you.
 
+**If the build fails on `psycopg2-binary` with `pg_config executable not found`:**
+Streamlit Cloud's Python version can be newer than `psycopg2-binary==2.9.9` has a
+prebuilt wheel for (this happened during initial testing — Streamlit Cloud was running
+Python 3.14, released long after that pin). The repo's `.python-version` file pins
+Python to 3.11 for exactly this reason, which `uv` (Streamlit Cloud's build tool) reads
+automatically — if you still hit this, double check the app's **Advanced settings** has
+Python 3.11 selected (or reboot the app from the dashboard to force a fresh build).
+
 ## 4. Verify
 
 - Submit a ticket via the **Live Demo** tab. Expect it to route and resolve — if a Render
